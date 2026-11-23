@@ -254,6 +254,14 @@ function CombatResolver.FlushAllyKoReactions(allUnits, activeUnit)
 	for _, d in ipairs(dead) do
 		d._allyKoBuffered = nil
 		d._allyKoSeen = true
+		-- BUG-190 (batch 15): inside a held hit command these reaction lines (Hemophage / Sluggish Finisher) wait for
+		-- the KO line of the unit that went down (BeginHitReaction afterKo); they were logged before the hit that
+		-- caused the KO. Not held (clock-advance KOs) = logged at once, as before. Closed below even on an error.
+		local _koReact = BattleVisualBroadcaster.BeginHitReaction and BattleVisualBroadcaster.BeginHitReaction(d, true) or false
+		-- BUG-214 (batch 18): not held (player Push command) = this unit's queued push / collision KO line goes out
+		-- now, before its reaction lines (was: push -> Hemophage -> KO).
+		if not _koReact and BattleVisualBroadcaster.LogHeldKo then BattleVisualBroadcaster.LogHeldKo(d) end
+		local _koReactOk, _koReactErr = pcall(function()
 		if d.tileX and d.tileY then
 			for _, u in ipairs(allUnits) do
 				if u ~= d and u.isAlive and u.side == d.side and u.tileX and u.tileY then
@@ -296,6 +304,9 @@ function CombatResolver.FlushAllyKoReactions(allUnits, activeUnit)
 				end
 			end
 		end
+		end)  -- BUG-190: end of the pcall'd reaction body
+		if BattleVisualBroadcaster.EndHitReaction then BattleVisualBroadcaster.EndHitReaction(_koReact) end
+		if not _koReactOk then error(_koReactErr, 0) end
 	end
 end
 
@@ -1070,6 +1081,52 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 end
 
 --------------------------------------------------
+-- BLEED HIT BONUS (BUG-110, 2026-11-22). ONE helper for the real hit (ApplyOutcome) and every
+-- preview (PredictBasicAttack, the turn-prompt skill preview, PreviewSkillHits), so the shown
+-- number matches the hit (ARC-001, DAT-001). elements_statuses 54: a PHYSICAL hit that reduces HP
+-- on a Bleeding target adds round(Max HP x StatusService.BLEED_HP_FRACTION x Debuff Resistance)
+-- (x Quick Clotting / Hemophiliac) -- the formula itself is StatusService.GetCurrentDotDamage
+-- "Bleed". 0 when the element is not Physical, the target has no Bleed, or the attacker has Bleed
+-- Phobia. Pure READ (no prints, no damage; BUG-105). PER HIT (elements_statuses 54): every Rake
+-- hit that reduces HP adds it (statuses stay once per attack, weapons_equipment 163).
+--------------------------------------------------
+function CombatResolver.GetBleedHitBonus(target, attacker, element)
+	if not (target and target.isAlive) then return 0 end
+	if not (element == nil or element == "Physical" or element == "") then return 0 end
+	if not StatusService.HasStatus(target, "Bleed") then return 0 end
+	if attacker and TraitEffectService.HasStatusPhobia(attacker, "Bleed") then return 0 end
+	return StatusService.GetCurrentDotDamage(target, "Bleed")
+end
+
+-- BUG-110 W2: shield that soaks a hit of this element (Draining Ward = elemental-only, so it does
+-- not soak a Physical hit; same rule as ApplyOutcome / UnitSchema_ApplyDamage).
+function CombatResolver.ShieldSoakFor(target, element)
+	local s = (target and target.shield_total) or 0
+	if target and target.shieldElementalOnly and (element == nil or element == "" or element == "Physical") then
+		s = 0
+	end
+	return s
+end
+
+-- BUG-110 W2: how many of nHits hits of `per` damage reduce HP after the shield soaks (previews only).
+function CombatResolver.HpHitsAfterShield(target, element, per, nHits)
+	local s, n = CombatResolver.ShieldSoakFor(target, element), 0
+	for _ = 1, (nHits or 1) do
+		if per > s then n = n + 1 end
+		s = math.max(0, s - per)
+	end
+	return n
+end
+
+-- BUG-110: preview Bleed bonus total for nHits hits (bonus x hits that reduce HP). Pure READ.
+function CombatResolver.PredictBleedBonus(target, attacker, element, per, nHits)
+	if (per or 0) <= 0 then return 0 end
+	local b = CombatResolver.GetBleedHitBonus(target, attacker, element)
+	if b <= 0 then return 0 end
+	return b * CombatResolver.HpHitsAfterShield(target, element, per, nHits)
+end
+
+--------------------------------------------------
 -- BASIC ATTACK PREDICTION (Rake / Rebound, DESIGNER RULING 2026-11-21)
 -- One function for the turn-prompt preview (BattleTurnController), AI scoring (AIService) and the
 -- shape of the Attack commit (CommandService), so preview == actual (ARC-001, DAT-001). Pure READ:
@@ -1105,6 +1162,12 @@ function CombatResolver.PredictBasicAttack(attacker, defender, weaponDamage, uni
 		if hits > 1 then { hitMult = mult } else nil)
 	local per = r.finalDamage or 0
 	local res = { damage = per * hits, hits = hits, perHit = per, rtDelayHits = hits, statuses = {}, statusTurns = {}, outcome = r }
+	-- BUG-110: Bleed bonus PER HIT that reduces HP after shields (elements_statuses 54), same
+	-- helper as the real hit.
+	if r.type == "Damage" and per > 0 then
+		res.bleedBonus = CombatResolver.PredictBleedBonus(defender, attacker, r.element, per, hits)
+		res.damage = res.damage + res.bleedBonus
+	end
 	if per > 0 then
 		for _, sid in ipairs(r.appliesStatuses or {}) do
 			local turns = GameConstants.STATUSES[sid] and GameConstants.STATUSES[sid].duration or nil
@@ -1128,6 +1191,10 @@ function CombatResolver.PredictBasicAttack(attacker, defender, weaponDamage, uni
 			local rr = CombatResolver.ResolveBasicAttack(attacker, rb, weaponDamage or attacker.weaponDamage or 10,
 				{ hitMult = rbMult, noRiders = true })
 			res.rebound = { unit = rb, damage = rr.finalDamage or 0 }
+			-- BUG-110: the Rebound hit is a real ApplyOutcome hit, so a Bleeding rebound target takes the bonus too.
+			if rr.type == "Damage" then
+				res.rebound.damage = res.rebound.damage + CombatResolver.PredictBleedBonus(rb, attacker, rr.element, rr.finalDamage or 0, 1)
+			end
 		end
 	end
 	return res
@@ -1636,11 +1703,10 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 		if skillDef and skillDef.undeadDamageMult then
 			finalHeal = math.max(1, math.round(finalHeal * skillDef.undeadDamageMult))
 		end
-		print(string.format(
-			"[CombatResolver] Undead healing reversal: %s receives %d damage instead of healing",
-			target.name, finalHeal
-		))
+		-- BUG-105 (2026-11-21): ResolveHealing is also called by AI scoring / previews, so the
+		-- reversal is only TAGGED here; ApplyOutcome prints it when the damage is really applied.
 		return {
+			undeadReversal = true,
 			type         = "Damage",
 			targetId     = target.id,
 			finalDamage  = finalHeal,
@@ -1809,7 +1875,23 @@ function CombatResolver.GetHitRecorder()
 	return _hitRecorder
 end
 
+-- BUG-139 (BUG-HUNT-08, 2026-11-22): HIT CAPTURE for the player Skill result list. Separate from the
+-- reaction window above (that one keeps only damage > 0 hits by the actor and is swapped in and out
+-- by landing / trap code). This one records EVERY unit ApplyOutcome resolves an outcome on (damage or
+-- heal, any source) while open, so BattleTurnController can tell the skill's own hits from side
+-- effects (explosion chains, Collapse) that clients were already sent. Read-only for gameplay.
+local _hitCapture: { [any]: boolean }? = nil
+function CombatResolver.BeginHitCapture()
+	_hitCapture = {}
+end
+function CombatResolver.EndHitCapture(): { [any]: boolean }
+	local c = _hitCapture or {}
+	_hitCapture = nil
+	return c
+end
+
 function CombatResolver.ApplyOutcome(outcome, target, attacker)
+	if _hitCapture and target and target.id ~= nil then _hitCapture[target.id] = true end
 	-- QUEST GOAL Capture (step 6 follow-up to step-5 Tester WARN-2): the capture target "avoids
 	-- engaging", so it never hurts its attacker through a reaction either: Retribution Shell break,
 	-- Retaliator / Toxic Skin debuffs, Reptilian Spiked Hide, Mirror Mail, Spiked Plate, Deflect
@@ -1817,6 +1899,12 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- 6 guarded sites below (Retaliator and Toxic Skin share one check). Effects that only touch the
 	-- target itself still apply.
 	local _noReact = target ~= nil and target.isCaptureTarget == true
+	if outcome.undeadReversal and target then
+		print(string.format(
+			"[CombatResolver] Undead healing reversal: %s receives %d damage instead of healing",
+			target.name, outcome.finalDamage or 0
+		))
+	end
 	if outcome.type == "Healing" then
 		local healAmt = outcome.finalHealing
 		-- Darkened Ground augment (2026-10-25): a unit standing on Darkened Ground receives
@@ -1989,21 +2077,22 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- (x Quick Clotting / Hemophiliac). A barrier that soaks the whole hit means no trigger. Applied
 	-- directly (TRG-010), real hits only (ApplyOutcome is never called by AI previews). The DB Boss HP%
 	-- modifier has no system yet (Poison does not use it either).
+	-- BUG-110: amount from CombatResolver.GetBleedHitBonus (shared with every preview); Bleed Phobia
+	-- (DB "cannot ... trigger bleed with attacks") is checked there. Per hit: every Rake hit that
+	-- reduces HP triggers it (elements_statuses 54).
 	if (actual or 0) > 0 and target.isAlive then
-		local _el = outcome.element
-		-- Bleed Phobia (DB "cannot ... trigger bleed with attacks"): the attacker's hit does not trigger it.
-		local _bleed = (_el == nil or _el == "Physical" or _el == "") and StatusService.HasStatus(target, "Bleed")
-			and not (attacker and TraitEffectService.HasStatusPhobia(attacker, "Bleed"))
+		local _bd = CombatResolver.GetBleedHitBonus(target, attacker, outcome.element)
+		local _bleed = _bd > 0 and StatusService.HasStatus(target, "Bleed")
 		if _bleed then
-			local _bd = math.max(1, math.round((target.maxHp or 1) * StatusService.BLEED_HP_FRACTION * StatusService.GetDebuffResist(target)
-				* TraitEffectService.GetDotDamageReceivedModifier(target, "Bleed")))
-			UnitSchema_ApplyDamage(_bd, target)
+			local _bdDealt = UnitSchema_ApplyDamage(_bd, target)  -- BUG-173: HP the bonus really removed (log)
 			print(string.format("[CombatResolver] Bleed: %s takes %d bonus | HP: %d/%d", target.name, _bd,
 				target.currentHp or 0, target.maxHp or 0))
 			if not target.isAlive then
 				target._killedBy = target._killedBy or (attacker and attacker.id) or _bleed.sourceUnitId
 			end
-			BattleVisualBroadcaster.UnitStateChanged(target, "Bleed")
+			-- BUG-173 (batch 14): log only the bonus, after the hit line (BattleVisualBroadcaster.BleedBonus).
+			-- The full-diff sync here logged "Bleed hit X for 35." (hit + bonus) before the hit line.
+			BattleVisualBroadcaster.BleedBonus(target, if type(_bdDealt) == "number" then _bdDealt else _bd)
 		end
 	end
 
@@ -2062,7 +2151,12 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	end
 
 	-- Phase 2: Check for damage-triggered status removal (e.g. Sleep)
-	StatusService.OnDamageReceived(target, actual)
+	-- BUG-175 (batch 14): a Sleep this hit broke (and the Sleep Immunity it grants) is logged now, after the
+	-- hit line, with the real cause. It was silent and turned up later under another cause ("(Dev)").
+	local _dmgRemoved = StatusService.OnDamageReceived(target, actual or 0)
+	if type(_dmgRemoved) == "table" and table.find(_dmgRemoved, "Sleep") then
+		BattleVisualBroadcaster.SleepBroken(target)
+	end
 
 	-- Evasion Surge (reworked 2026-10-26): a direct-damage hit resolved against this target consumes
 	-- ONE evasion charge (the +0.30 evasiveness it granted applied to THIS hit in calcHitQuality).
@@ -2210,7 +2304,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			local removed = StatusService.RemoveRandomBuff(target)
 			if removed then
 				print(string.format("[CombatResolver] Purifier: %s dispels %s from %s", attacker.name, removed, target.name))
-				if BattleVisualBroadcaster.UnitStateChanged then
+				-- BUG-198 (batch 16): status-only sync; the hit line logs the HP (was a caused HP diff before it).
+				if BattleVisualBroadcaster.HitStatusChanged then
+					BattleVisualBroadcaster.HitStatusChanged(target, "Purifier")
+				elseif BattleVisualBroadcaster.UnitStateChanged then
 					BattleVisualBroadcaster.UnitStateChanged(target, "Purifier")
 				end
 			end
@@ -2221,7 +2318,12 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 				local sid = pool[math.random(1, #pool)]
 				StatusService.ApplyStatus(target, sid, attacker.id)
 				print(string.format("[CombatResolver] Buff-Blind: %s grants %s to %s", attacker.name, sid, target.name))
-				if BattleVisualBroadcaster.UnitStateChanged then
+				-- BUG-198 (batch 16): "Buff-Blind hit X for 28." and "X is now Hold the Line (Buff-Blind)." came
+				-- BEFORE the attack line, which then showed -28 HP again. Status-only sync now: the attack line
+				-- logs the HP and names the buff ("+Hold the Line").
+				if BattleVisualBroadcaster.HitStatusChanged then
+					BattleVisualBroadcaster.HitStatusChanged(target, "Buff-Blind")
+				elseif BattleVisualBroadcaster.UnitStateChanged then
 					BattleVisualBroadcaster.UnitStateChanged(target, "Buff-Blind")
 				end
 			end
@@ -2690,6 +2792,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		if ogreDelay > 0 then
 			ogreDelay = math.round(ogreDelay * TraitEffectService.GetRtDelayInflictMultiplier(attacker))
 		end
+		ogreDelay = GameConstants.ApplyBossRtDelay(target, ogreDelay) -- BUG-158: boss x0.5 (core_stats 42)
 		if ogreDelay > 0 then
 			target.remainingRt = (target.remainingRt or 0) + ogreDelay
 			print(string.format(
@@ -2712,14 +2815,14 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 
 	print(string.format(
 		"[CombatResolver] %s takes %d damage (AP:%.1f HQ:%.2f%s%s) | HP: %d/%d %s%s",
-		target.name,
-		outcome.finalDamage,
-		outcome.attackPower,
-		outcome.hitQuality,
+		tostring(target.name),
+		outcome.finalDamage or 0,
+		outcome.attackPower or 0, -- 2026-11-21: nil-safe log line (Tester batch 5)
+		outcome.hitQuality or 1,
 		posLabel,
 		facingLabel,
-		target.currentHp,
-		target.maxHp,
+		target.currentHp or 0,
+		target.maxHp or 0,
 		target.isAlive and "" or "| DEFEATED",
 		statusApplied and (" | +" .. statusApplied) or ""
 	))

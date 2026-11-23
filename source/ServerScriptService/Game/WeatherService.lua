@@ -249,12 +249,17 @@ end
 local function clearWeatherStatuses(state: any)
 	for _, u in ipairs(state.units) do
 		if u.statusInstances then
+			local _removedAny = false
 			for i = #u.statusInstances, 1, -1 do
 				if u.statusInstances[i].weatherLocked then
 					table.remove(u.statusInstances, i)
+					_removedAny = true
 				end
 			end
-			if _broadcaster and _broadcaster.UnitStateChanged then
+			-- BUG-188 (batch 15): only a unit that really lost a weather status gets a "Weather change" sync. Every
+			-- unit was synced, so a change the log had not described yet was stamped with this cause ("Snakekiss
+			-- Pickborn is no longer Sleep (Weather change).").
+			if _removedAny and _broadcaster and _broadcaster.UnitStateChanged then
 				_broadcaster.UnitStateChanged(u, "Weather change")
 			end
 		end
@@ -486,7 +491,7 @@ Periodic["Earthquake"] = function(ctx: any)
 			reshapeTile(x, y, nil, newE)
 			local u = occ[x .. "," .. y]
 			if u then
-				u.remainingRt = (u.remainingRt or 0) + 150
+				u.remainingRt = (u.remainingRt or 0) + GameConstants.ApplyBossRtDelay(u, 150) -- BUG-158
 				if _broadcaster then _broadcaster.UnitStateChanged(u, "Earthquake") end
 			end
 			-- OBS Phase 2c-D: a downward quake (delta<0) on a breakable OBS blocker = ONE hit

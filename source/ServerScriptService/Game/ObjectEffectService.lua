@@ -1297,7 +1297,7 @@ Handlers["Obelisk"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	local targets = livingEnemies(a, ctx.allUnits)
 	for _, u in ipairs(targets) do
-		u.remainingRt = (u.remainingRt or 0) + 300
+		u.remainingRt = (u.remainingRt or 0) + GameConstants.ApplyBossRtDelay(u, 300) -- BUG-158
 		if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u) end
 	end
 	print(string.format("[ObjectEffectService] Obelisk | +300 RT Delay to %d enemy(s)", #targets))
@@ -1358,7 +1358,7 @@ end
 Handlers["Snare Trap"] = function(ctx: any): (boolean, any)
 	applyAndRebuild(ctx.actor, "Pinned", ctx.actor.id)
 	-- AC-012 Trapmaker's Roll: x1.20 RT delay on a trap placed by the wearer (inst.trapPowerMult).
-	local _snareRt = math.round(150 * ((ctx.objInstance and ctx.objInstance.trapPowerMult) or 1))
+	local _snareRt = GameConstants.ApplyBossRtDelay(ctx.actor, math.round(150 * ((ctx.objInstance and ctx.objInstance.trapPowerMult) or 1))) -- BUG-158
 	ctx.actor.remainingRt = (ctx.actor.remainingRt or 0) + _snareRt
 	print(string.format("[ObjectEffectService] Snare Trap | Pinned + %d RT Delay", _snareRt))
 	return true, nil
@@ -1391,7 +1391,7 @@ Handlers["Stasis Trap Emitter"] = function(ctx: any): (boolean, any)
 			and math.max(math.abs(u.tileX - cx), math.abs(u.tileY - cy)) <= r then
 			local vit = (u.effectiveStats and u.effectiveStats.VIT) or 10
 			local gear = (u.gearDerived and u.gearDerived.rtDelayResist) or 1
-			local d = math.max(0, GameConstants.CalcRtDelayResistance(raw, vit, gear))
+			local d = math.max(0, GameConstants.CalcRtDelayResistance(raw, vit, gear, u)) -- BUG-158 boss x0.5
 			u.remainingRt = (u.remainingRt or 0) + d
 			if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
 				BattleVisualBroadcaster.UnitStateChanged(u)
@@ -1411,7 +1411,7 @@ Handlers["Poison Trap"] = function(ctx: any): (boolean, any)
 	for _ = 1, vStrength do
 		applyAndRebuild(a, "Venom", a.id)
 	end
-	local rtDelay = (ctx.objDef and ctx.objDef.rtDelay) or 30
+	local rtDelay = GameConstants.ApplyBossRtDelay(a, (ctx.objDef and ctx.objDef.rtDelay) or 30) -- BUG-158
 	a.remainingRt = (a.remainingRt or 0) + rtDelay
 	print(string.format("[ObjectEffectService] Poison Trap | Poison + Venom(str %d) + %d RT on %s",
 		vStrength, rtDelay, tostring(a.name)))
@@ -2483,7 +2483,7 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 				u.currentHp = math.max(0, (u.currentHp or 0) - _shown3)
 				markHunterAttacked(u, a, _shown3)  -- Treasure Hunter: a unit toppled the pillar
 				if u.currentHp <= 0 then u.isAlive = false end
-				u.remainingRt = (u.remainingRt or 0) + 100
+				u.remainingRt = (u.remainingRt or 0) + GameConstants.ApplyBossRtDelay(u, 100) -- BUG-158
 				StatusService.ApplyStatus(u, "Pinned", a.id)
 				if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u) end
 				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and u.tileX and u.tileY then
@@ -3410,7 +3410,9 @@ end
 -- activation") and tell clients to drop the sprite. A final UnitStateChanged
 -- guarantees any direct HP/RT mutation (e.g. Snare's +RT) reaches the client.
 -- Returns { fired, stops, killed }.
-function ObjectEffectService.TriggerTrap(actor: any, inst: any, state: any, allUnits: any): any
+-- BUG-254 (batch 21, Studio pass 11): opts.noKoText = the caller (a push, CommandService springTrap) logs the KO
+-- line itself ("<unit> is knocked out." after its push line), so the trap line leaves out "<unit> was defeated.".
+function ObjectEffectService.TriggerTrap(actor: any, inst: any, state: any, allUnits: any, opts: any): any
 	if not (actor and inst and actor.isAlive) then return { fired = false } end
 	-- Venus Man-Trap (2026-11-07): catch-and-hold instead of a one-shot trap effect.
 	if inst.type == "Venus Man-Trap" and (ObjectEffectService :: any)._venusCapture then
@@ -3480,9 +3482,18 @@ function ObjectEffectService.TriggerTrap(actor: any, inst: any, state: any, allU
 		for _, sid in ipairs(gained) do table.insert(parts, sid) end
 		local text = `{who} {verb} {article} {tostring(inst.type)}`
 		text = if #parts > 0 then `{text} — {table.concat(parts, ", ")}.` else `{text}.`
-		if killed then text = `{text} {who} was defeated.` end
+		-- BUG-254; BUG-258 (batch 21b, Tester F1): keep "was defeated." when the trap itself already killed the unit
+		-- (Land Mine blast sets isAlive = false here), because UnitPushed queues no KO line for a unit already shown dead.
+		-- Spike-type traps only lower HP (springTrap does the Kill after), so UnitPushed writes "is knocked out.".
+		local _koInLine = killed and not (type(opts) == "table" and opts.noKoText == true and actor.isAlive ~= false)
+		if _koInLine then text = `{text} {who} was defeated.` end
 		if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
 			BattleVisualBroadcaster.Log("trap", text, actor.id)
+		end
+		-- BUG-267 (batch 22, Studio pass 13): this line is the KO's one line. Tell the log, so the skill-knockback path
+		-- (UnitActed logs a KO line for its dead target) and any push / flush add no "<unit> is knocked out." after it.
+		if _koInLine and actor.isAlive == false and BattleVisualBroadcaster and BattleVisualBroadcaster.MarkKoLogged then
+			BattleVisualBroadcaster.MarkKoLogged(actor)
 		end
 	end
 	print(string.format("[ObjectEffectService] TRAP SPRUNG | %s on %s at (%s,%s) | stops=%s killed=%s",
@@ -3656,7 +3667,7 @@ function ObjectEffectService._onObjectHit(state: any, inst: any, def: any, attac
 				end
 				if u.isAlive then
 					StatusService.ApplyStatus(u, def.stingStatus or "Poison", "object")
-					u.remainingRt = (u.remainingRt or 0) + (tonumber(def.stingRtDelay) or 100)
+					u.remainingRt = (u.remainingRt or 0) + GameConstants.ApplyBossRtDelay(u, tonumber(def.stingRtDelay) or 100) -- BUG-158
 				end
 				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage then
 					BattleVisualBroadcaster.ObjectDamage(u.tileX, u.tileY, shown, focus, label)
@@ -4099,7 +4110,7 @@ Handlers["Harpoon Shooter"] = function(ctx: any): (boolean, any)
 	applySiegeOutcome(tgt, outcome, { done = false }, ObjectEffectService.GetDisplayType(obj, "Harpoon Shooter"), a)
 	if not tgt.isAlive then tgt._killCause = tgt._killCause or "siege"; tgt._killedBy = tgt._killedBy or a.id end
 	if tgt.isAlive then
-		local unpushable = tgt.enemyType == "Boss" or tgt.isBoss or tgt._displacementImmune
+		local unpushable = GameConstants.IsBoss(tgt) or tgt._displacementImmune  -- BUG-177: shared boss check (core_stats 55)
 			or (StatusService.IsRelocationLocked and StatusService.IsRelocationLocked(tgt))
 		local pulled = false
 		if not unpushable then

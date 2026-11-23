@@ -777,7 +777,11 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 			local pool = getConsumablePool()
 			local conId = pool[itemRng:NextInteger(1, #pool)]
 			local def = ConsumableData.GetById(conId)
-			local rarity = applyRarityModifier(weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight"))
+			-- BUG-127 (BUG-HUNT-18, 2026-11-22): a consumable's rarity is its FIXED tier (guild_facilities 68,
+			-- same as RollDispatchItem / the Bag). The roll below used to be shown instead (Trauma Kit "Epic"
+			-- here, Uncommon in the Bag). The roll is kept, unused, so every later draw for the seed is unchanged.
+			local _rolledRarity = applyRarityModifier(weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight"))
+			local rarity = (def and def.tier) or _rolledRarity
 			print(string.format("[RewardService] Reward %d: Consumable %s (%s) [%s]",
 				i, conId, def and def.name or "?", rarity))
 			table.insert(results, {
@@ -918,7 +922,10 @@ function RewardService.BuildRewardSummaries(results)
 				nativePassiveName = (not isArmor) and (archetype and archetype.nativePassiveId
 					and GearPassiveSummary.NativePassiveName(archetype.nativePassiveId) or nil) or nil,
 				nativePassiveDesc = (not isArmor) and (archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil) or nil,
+				nativePassives = (not isArmor) and archetype and GearPassiveSummary.NativePassiveList(archetype) or nil, -- BUG-106
 				projectileType = (not isArmor) and (archetype and archetype.projectileType or nil) or nil,
+				-- batch 8b (W4): player pattern label, same rule as ItemDisplay; nil = Single, no row (DAT-001)
+				patternLabel = if not isArmor and profile and profile.pattern and profile.pattern ~= "Single" then WeaponData.GetPatternLabel(profile.pattern) else nil,
 				element = (not isArmor) and WeaponData.GetInstanceElement(item) or nil,
 				hp = isArmor and (profile and profile.hp or 0) or nil,
 				mp = isArmor and (profile and profile.mp or 0) or nil,

@@ -1583,9 +1583,10 @@ local function requestSkillHitPreview(skillId, tx, ty)
 			if e.kind == "damage" then
 				-- Same RT delay estimate as the unit-click preview (VIT x gear, broadcast by the server).
 				local wDelay = (currentPrompt and currentPrompt.weaponRtDelay) or 0
+				-- BUG-158: a boss target shows its x0.5 RT delay (GameConstants.BOSS_RULES.rtDelay, tier from enemyType).
 				p.targetRtDelay = (tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
-					and math.round(wDelay * tgtData.derivedStats.rtDelayResist)
-					or GameConstants.CalcRtDelayResistance(wDelay, tgtData and tgtData.stats and tgtData.stats.VIT or 10)
+					and math.round(wDelay * tgtData.derivedStats.rtDelayResist * GameConstants.GetBossMod(tgtData, "rtDelay"))
+					or GameConstants.CalcRtDelayResistance(wDelay, tgtData and tgtData.stats and tgtData.stats.VIT or 10, nil, tgtData)
 			end
 			-- Server-worked turn delay for this unit (2026-11-08 7:14 PM, area turn delay skills such as
 			-- Dragon Dive / Decimating Swing): same number the real hit adds, so it wins over the estimate.
@@ -2423,9 +2424,10 @@ local function processTileClick(bx, by, skipFacingPick)
 						-- the server) already folds VIT resist x gear RT-resist, so the preview matches the
 						-- authoritative server value. Falls back to the VIT-only formula if derivedStats is absent.
 						-- Rake (2026-11-21): one resisted RT Delay per hit; the server sends rtDelayHits (nil = 1).
+						-- BUG-158: boss target x0.5 (GameConstants.BOSS_RULES.rtDelay), same as the server hit.
 						targetRtDelay = ((tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
-							and math.round((currentPrompt.weaponRtDelay or 0) * tgtData.derivedStats.rtDelayResist)
-							or GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10))
+							and math.round((currentPrompt.weaponRtDelay or 0) * tgtData.derivedStats.rtDelayResist * GameConstants.GetBossMod(tgtData, "rtDelay"))
+							or GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10, nil, tgtData))
 							* (t.rtDelayHits or 1),
 						statusEffect = "None",
 						-- Server prediction extras (CombatResolver.PredictBasicAttack): Rake hit count, on-hit
@@ -2537,8 +2539,8 @@ local function processTileClick(bx, by, skipFacingPick)
 						-- Gear RT Delay Resistance (2026-10-23): use the combined derivedStats.rtDelayResist
 						-- (VIT x gear) the server broadcasts; VIT-only formula is the fallback. Heals: no delay.
 						targetRtDelay = (not isHeal) and ((tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
-							and math.round((currentPrompt.weaponRtDelay or 0) * tgtData.derivedStats.rtDelayResist)
-							or GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10)) or 0,
+							and math.round((currentPrompt.weaponRtDelay or 0) * tgtData.derivedStats.rtDelayResist * GameConstants.GetBossMod(tgtData, "rtDelay")) -- BUG-158
+							or GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10, nil, tgtData)) or 0,
 						statusEffect = statusEff,
 						statusDuration = statusDur,
 						channelTime = isChannel and selectedSkill.channelTime or nil,
@@ -4228,7 +4230,8 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 			id = _u.id, name = _u.name, side = _u.side,
 			currentHp = _u.currentHp, maxHp = _u.maxHp,
 			currentMp = data.currentMp or _u.currentMp, maxMp = data.maxMp or _u.maxMp,
-			currentAp = _u.currentAp, maxAp = _u.maxAp or 2,
+			-- BUG-131 (2026-11-22): the server's AP for this turn (GameConstants.GetTurnAp); boss = 3/3.
+			currentAp = data.currentAp or _u.currentAp, maxAp = data.maxAp or _u.maxAp or 2,
 			remainingRt = _u.remainingRt,
 			doctrine = _u.doctrine or "", level = _u.level, race = _u.race,
 			tileX = _u.tileX, tileY = _u.tileY,
@@ -4279,6 +4282,9 @@ BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	CameraController.EndScriptedView()  -- restore the player's last chosen zoom + view
 	setCamLock(false) -- the player's turn: camera control back
 	enterActionSelection()
+	-- BUG-154: the server refused the last command -> show its short reason once (loadout_ui_spec 131).
+	local rejText = if type(prompt.rej) == "string" then GameConstants.REJECT_TEXT[prompt.rej] else nil
+	if rejText then BattleHUD.ShowDisabledReason(rejText) end
 	-- New-player tips (SYS-04): the player's own turn, after any cinematic -> calm + TIP-BAT-01.
 	pcall(function() require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10):WaitForChild("TipController", 10)).PlayerTurn() end)
 	-- Waiting for a command: Thinking now (first prompt of the turn), then after every 15s
@@ -5149,6 +5155,9 @@ _G.CTRBLXAI_SetViewMode = function(mode)
 	-- Elevation numbers only in Top view.
 	setElevationLabelsVisible(mode == "Top")
 end
+-- BUG-107 (PT-05): the HUD reads the live camera mode when it (re)builds its View button, so a
+-- view picked during deployment is labelled correctly after BattleStarted rebuilds the HUD.
+BattleHUD.GetCameraViewMode = CameraController.GetViewMode
 
 -- ── TERRAIN RENDER SWITCHER (Phase 1: Voxel <-> Per-tile Parts) ──
 -- 3-way client-side visual swap so the player can A/B terrain looks live.
@@ -6559,6 +6568,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 					baseStats = {
 						Attack = item.damage or 0,
 						Range = (item.minRange or 1) .. "-" .. (item.maxRange or 1),
+						Pattern = item.patternLabel, -- batch 8b (W4): server label; nil = Single, no row
 						Defense = item.defense or 0,
 						WT = item.wt or 0,
 						RTDelay = item.rtDelay or 0,
@@ -6580,7 +6590,12 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 					table.insert(uiItem.tags, "Melee")
 				end
 				if item.element then table.insert(uiItem.tags, item.element) end
-				if item.nativePassiveId then
+				if type(item.nativePassives) == "table" and #item.nativePassives > 0 then
+					-- BUG-106: every built-in passive (Boomerang: Tricky + Rebound).
+					for _, np in ipairs(item.nativePassives) do
+						table.insert(uiItem.passives, { name = np.name or np.id, icon = "[*]", desc = np.desc or "" })
+					end
+				elseif item.nativePassiveId then
 					table.insert(uiItem.passives, {
 						-- Server-supplied player name, internal id only as fallback (2026-10-30).
 						name = item.nativePassiveName or item.nativePassiveId,

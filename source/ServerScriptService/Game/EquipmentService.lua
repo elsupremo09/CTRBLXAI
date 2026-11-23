@@ -303,7 +303,14 @@ function EquipmentService.ComputeConsumableSlotCount(unit)
 	return count
 end
 
+-- BUG-HUNT-11 diagnostic (2026-11-22, batch 11, logging only, no gameplay effect): when true, a rebuild that
+-- changes the max HP of a unit on the battle grid (tileX set) warns old -> new max HP, old -> new VIT, its
+-- status ids and the race time phase, so a Studio repro shows what moved it. Default false.
+local DEBUG_MAXHP_CHANGE = false
+
 function EquipmentService.RebuildUnitStats(unit)
+	local _dbgOldMaxHp = unit.maxHp
+	local _dbgOldVit = unit.effectiveStats and unit.effectiveStats.VIT
 	-- Furniture bonus for this unit (nil = none). Stored on the unit for the healing-received
 	-- reader (StatusService.GetHealingReceivedMult); rewritten every rebuild.
 	local furn = nil
@@ -774,6 +781,16 @@ function EquipmentService.RebuildUnitStats(unit)
 	-- pattern as the MP bonus above. Set by Main for a dungeon battle, cleared before HP/MP are saved.
 	if type(unit.battleMaxHpBonusPct) == "number" and unit.battleMaxHpBonusPct ~= 0 then -- < 0: RL-46 Glass Crown (relics v2)
 		unit.maxHp = math.max(1, unit.maxHp + math.round(unit.maxHp * unit.battleMaxHpBonusPct))
+	end
+
+	if DEBUG_MAXHP_CHANGE and _dbgOldMaxHp ~= nil and unit.maxHp ~= _dbgOldMaxHp and unit.tileX ~= nil then
+		local _ids = {}
+		for _, inst in ipairs(unit.statusInstances or {}) do
+			table.insert(_ids, tostring(inst.id))
+		end
+		warn(string.format("[EquipmentService] maxHp %s %s->%s VIT %s->%s statuses=%s phase=%s",
+			tostring(unit.name), tostring(_dbgOldMaxHp), tostring(unit.maxHp), tostring(_dbgOldVit), tostring(vit),
+			table.concat(_ids, ","), tostring(RacePassiveService.GetTimePhase and RacePassiveService.GetTimePhase())))
 	end
 
 	-- Clamp current to new max (don't increase current beyond max)

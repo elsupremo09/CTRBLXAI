@@ -66,7 +66,7 @@ end
 -- CONSTANTS
 --------------------------------------------------
 
-local AP_PER_TURN_STANDARD = GameConstants.AP_PER_TURN_STANDARD
+-- AP per turn: GameConstants.GetTurnAp (BUG-131; the old AP_PER_TURN_STANDARD local is no longer read here).
 local REST_RT_MULTIPLIER   = GameConstants.REST_RT_MULTIPLIER
 
 --------------------------------------------------
@@ -770,12 +770,19 @@ function BattleCoordinator.AdvanceClock(state)
 	-- Main.server.lua will check unit.isChanneling and handle activation.
 	-- We still give AP so EndTurn doesn't error, but the unit won't use it.
 	UnitSchema.RefreshAp(nextUnit)
-	nextUnit.currentAp = AP_PER_TURN_STANDARD + (tonumber(nextUnit._dgApBonus) or 0) -- RL-19 Berserker's Oath (dungeon, 2026-11-15)
+	-- BUG-123: Boss units get AP 3 per turn (core_stats 13); RL-19 Berserker's Oath bonus (dungeon, 2026-11-15).
+	-- BUG-131: one shared rule (GameConstants.GetTurnAp), also used for the shown max AP.
+	nextUnit.currentAp = GameConstants.GetTurnAp(nextUnit)
 	-- Dev god mode (2026-11-06): full HP/MP once at the start of a protected unit's turn, so damage
 	-- taken during other turns was already shown with its real numbers. Flagged for a HUD sync.
+	-- BUG-297 (batch 29, Studio pass 20): MP/AP refill here; the HP refill waits until Main has applied this
+	-- turn's start-of-turn DoT (_godHpRefillPending). The DoT amounts are computed above (ProcessStartOfTurn)
+	-- but applied later in Main, so refilling HP here made the Burn tick read "7 Burn damage (220/227)" right
+	-- after hit lines showing 114/227: the tick landed on the refilled HP instead of the real HP.
 	if UnitSchema.IsGodProtected(nextUnit) and nextUnit.isAlive then
-		UnitSchema.GodRefill(nextUnit)
+		UnitSchema.GodRefill(nextUnit, true)
 		nextUnit._godTurnRefilled = true
+		nextUnit._godHpRefillPending = true
 	end
 	-- Sluggish Finisher (F-162): AP lost while it was not this unit's turn is taken now. 2026-10-28.
 	if nextUnit._sluggishPendingAp then
@@ -867,7 +874,7 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		local dotEvents = StatusService.ProcessStartOfTurn(unit)
 		state.dotEvents = dotEvents
 		UnitSchema.RefreshAp(unit)
-		unit.currentAp = AP_PER_TURN_STANDARD + (tonumber(unit._dgApBonus) or 0) -- RL-19 Berserker's Oath (dungeon, 2026-11-15)
+		unit.currentAp = GameConstants.GetTurnAp(unit) -- RL-19 + BUG-123 Boss AP 3, shared rule (BUG-131)
 		if unit._sluggishPendingAp then  -- Sluggish Finisher (F-162), see above
 			unit._sluggishPendingAp = nil
 			unit.currentAp = math.max(0, unit.currentAp - 1)

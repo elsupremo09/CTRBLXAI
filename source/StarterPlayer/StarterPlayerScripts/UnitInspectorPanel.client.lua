@@ -302,6 +302,7 @@ local function showItemDetail(eq, slotName)
 		baseStats = isWeapon and {
 			Attack = eq.damage,
 			Range = rangeStr,
+			Pattern = eq.patternLabel, -- batch 8b (W4): server label; nil = Single, no row
 			Defense = eq.defense,
 			WT = eq.wt,
 			RTDelay = eq.rtDelay,

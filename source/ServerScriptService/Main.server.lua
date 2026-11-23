@@ -1193,6 +1193,7 @@ do
 end
 
 local doSave               -- fwd-declared; assigned inside the loop so dev actions at boot can call it
+local devRunQuitSave       -- batch 21 test hook (DevRunQuitSave); fwd-declared, assigned after doSave
 
 -- DUNGEON RUN END (build step 4, 2026-11-13; project_rules 264/266/267). Wired here, after the
 -- card inventory exists. Payer: an ended run's kept loot goes to the player once (unit EXP was
@@ -1445,6 +1446,9 @@ DungeonService.SetEventHooks({
 		if not (u and TraitData.GetTrait(traitId)) then return false end
 		u[if kind == "perk" then "perkIds" else "drawbackIds"] = { traitId }
 		if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
+		-- BUG-171: keep the saved record in sync after a permanent trait swap (lazy require; Main local is declared later).
+		local okL, LRH = pcall(require, Game:WaitForChild("LoadoutRequestHandlers"))
+		if okL and LRH and LRH.SyncPersistentResources then LRH.SyncPersistentResources(id, u) end
 		return true
 	end,
 	-- EV-15 Forge of Chance: a new bonus-line set for the higher rarity (same generator as loot / Runeforge).
@@ -1580,6 +1584,45 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 		end
 		if not cmd or type(cmd) ~= "table" then return end
 
+		-- DEV batch 19 (Studio-only test-setup commands, SEC: every field from the client is re-checked here).
+		-- devStudioOnly: these commands also need Roblox Studio (on top of DevAccess above).
+		local function devStudioOnly(name: string): boolean
+			if not game:GetService("RunService"):IsStudio() then
+				warn("[Dev] " .. name .. " rejected: Studio only")
+				return false
+			end
+			return true
+		end
+		-- A short id string (letters, digits, '-', '_', ' '), or nil.
+		local function devId(v: any): string?
+			if type(v) ~= "string" or #v == 0 or #v > 64 or not string.match(v, "^[%w%-_ ]+$") then return nil end
+			return v
+		end
+		-- A whole number in [lo, hi], or nil (rejects NaN / inf / non-numbers).
+		local function devInt(v: any, lo: number, hi: number): number?
+			local n = tonumber(v)
+			if n == nil or n ~= n or n == math.huge or n == -math.huge then return nil end
+			n = math.floor(n)
+			if n < lo or n > hi then return nil end
+			return n
+		end
+		-- Battle-only dev commands need a running battle (map size and units are set then).
+		local function devInBattle(name: string): boolean
+			if not battleRunning or not state or not MAP_WIDTH or not MAP_HEIGHT then
+				warn("[Dev] " .. name .. " ignored: no battle in progress")
+				return false
+			end
+			return true
+		end
+		local function devFindUnit(id: any): any
+			local uid = devId(id)
+			if not uid then return nil end
+			for _, u in ipairs(allUnitsList) do
+				if u.id == uid and u.isAlive then return u end
+			end
+			return nil
+		end
+
 		if cmd.action == "InstantWin" then
 			-- No battle running (hub or still deploying): ignore instead of crashing on a nil
 			-- battle state and killing enemies before the fight starts (Studio test 2026-11-08).
@@ -1626,8 +1669,15 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 			if UnitSchema.DevGodMode and state and state.units then
 				for _, u in ipairs(state.units) do
 					if u.isAlive and u.side == "Player" then
+						-- BUG-257 (batch 21, Studio pass 11): turning god mode on logged "Dev healed Mage for 22." in the battle
+						-- log. The refill is now a [Dev] server print only; the client still gets the new HP/MP (no log line).
+						local _hp0, _mp0 = u.currentHp or 0, u.currentMp or 0
 						UnitSchema.GodRefill(u)
-						if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
+						if (u.currentHp or 0) ~= _hp0 or (u.currentMp or 0) ~= _mp0 then
+							print(string.format("[Dev] God mode refill %s: HP %d->%d, MP %d->%d", tostring(u.name), _hp0,
+								u.currentHp or 0, _mp0, u.currentMp or 0))
+						end
+						if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, BattleVisualBroadcaster.SILENT) end
 					end
 				end
 			end
@@ -1684,20 +1734,75 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 				end
 			end
 		elseif cmd.action == "DevMoveUnit" then
+			if not devStudioOnly("DevMoveUnit") or not devInBattle("DevMoveUnit") then return end -- BUG-271
+			-- BUG-269 (batch 22, Studio pass 13): the game's pathfinder reads every unit's live tileX / tileY
+			-- (TargetingService.buildOccupancyMap over state.units, which is allUnitsList), so a dev move counts at
+			-- once there. Two gaps made it look like it did not: (1) a player turn prompt already open kept its old
+			-- move tiles / paths (it offered a path through the moved unit) -> the prompt is now re-sent from the
+			-- live board; (2) nothing stopped a dev move onto another living unit's tile (two units on one tile, the
+			-- occupancy map keeps only one of them), or onto a wall / off the map -> refused now, nothing changes.
+			local _tx, _ty = math.floor(tonumber(cmd.tileX) or 0), math.floor(tonumber(cmd.tileY) or 0)
 			for _, u in ipairs(allUnitsList) do
 				if u.id == cmd.unitId and u.isAlive and cmd.tileX and cmd.tileY then
-					clearTileOccupant(u.tileX, u.tileY)
-					u.tileX, u.tileY = cmd.tileX, cmd.tileY
-					setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
-					BattleEvents.UnitMoved:FireAllClients({ unitId = u.id, tileX = u.tileX, tileY = u.tileY })
-					print(string.format("[Dev] DevMoveUnit %s -> (%d,%d)", u.name, u.tileX, u.tileY))
+					local _why = nil
+					if _tx < 1 or _ty < 1 or (MAP_WIDTH and _tx > MAP_WIDTH) or (MAP_HEIGHT and _ty > MAP_HEIGHT) then
+						_why = "off the map"
+					elseif GameConstants.IsBlocked(_tx, _ty) then
+						_why = "tile is blocked"
+					elseif GameConstants.IsImpassableTerrain(_tx, _ty) then
+						_why = "terrain is impassable"
+					else
+						for _, o in ipairs(allUnitsList) do
+							if o ~= u and o.isAlive and o.tileX == _tx and o.tileY == _ty then
+								_why = "occupied by " .. tostring(o.name)
+								break
+							end
+						end
+					end
+					if _why then
+						warn(string.format("[Dev] DevMoveUnit %s -> (%d,%d) refused: %s", u.name, _tx, _ty, _why))
+					else
+						clearTileOccupant(u.tileX, u.tileY)
+						u.tileX, u.tileY = _tx, _ty
+						setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
+						BattleEvents.UnitMoved:FireAllClients({ unitId = u.id, tileX = u.tileX, tileY = u.tileY })
+						print(string.format("[Dev] DevMoveUnit %s -> (%d,%d)", u.name, u.tileX, u.tileY))
+						if BattleTurnController and BattleTurnController.RefreshPlayerPrompt then
+							BattleTurnController.RefreshPlayerPrompt()
+						end
+					end
 				end
 			end
 		elseif cmd.action == "DevSetHp" then
+			-- HP is always set to 1..max HP (a dev HP set never KOs, God Mode or not: hp=0 gives 1 HP).
+			-- BUG-290 (batch 27, Studio pass 18): kill = true (Studio only, in battle) KOs the unit instead, through
+			-- UnitSchema.Kill with the God Mode / Capture floor ignored, and logs "<unit> was defeated (Dev kill)."
+			if cmd.kill == true then
+				if not devStudioOnly("DevSetHp kill") or not devInBattle("DevSetHp kill") then return end
+				local _ku = devFindUnit(cmd.unitId)
+				if not _ku then warn("[Dev] DevSetHp kill: need a living unitId") return end
+				local _kHp = _ku.currentHp or 0
+				UnitSchema.Kill(_ku, true)
+				if BattleVisualBroadcaster.HpOnlyChanged then BattleVisualBroadcaster.HpOnlyChanged(_ku, "Dev", true)
+				elseif BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(_ku, "Dev kill") end
+				if _ku.isAlive == false then
+					clearTileOccupant(_ku.tileX, _ku.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = _ku.id })
+					print(string.format("[Dev] DevSetHp kill %s: HP %d -> 0 (KO, God Mode ignored)", _ku.name, _kHp))
+				else
+					warn(string.format("[Dev] DevSetHp kill %s: not KO'd", _ku.name))
+				end
+				return
+			end
 			for _, u in ipairs(allUnitsList) do
 				if u.id == cmd.unitId and u.isAlive then
 					u.currentHp = math.clamp(math.floor(tonumber(cmd.hp) or u.currentHp), 1, u.maxHp or 1)
-					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
+					-- BUG-268 (batch 22, Studio pass 13): HP only. The full state diff also logged any status the log had
+					-- not recorded yet under the "Dev" cause ("Wildbore Legionlord is now Shield (Dev).").
+					-- BUG-287 (batch 26, Studio pass 17): setup tool, so one neutral "[Dev] X HP set to N/M." line, not
+					-- "Dev hit X for 218." (devNeutral = true).
+					if BattleVisualBroadcaster.HpOnlyChanged then BattleVisualBroadcaster.HpOnlyChanged(u, "Dev", true)
+					elseif BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
 					print(string.format("[Dev] DevSetHp %s -> %d", u.name, u.currentHp))
 				end
 			end
@@ -1708,7 +1813,11 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 			for _, u in ipairs(allUnitsList) do
 				if u.tileX == tx and u.tileY == ty and u.isAlive then
 					print(string.format("[Dev] Kill unit at (%d,%d): %s HP:%d->0", tx, ty, u.name, u.currentHp))
-					UnitSchema.ForceKill(u)  -- god mode bypass (2026-11-06)
+					-- BUG-289 (batch 27, Studio pass 18): the normal KO path (UnitSchema.Kill), God Mode / Capture floor
+					-- ignored (dev kill), and ONE battle-log line "<unit> was defeated (Dev kill)." (there was none).
+					UnitSchema.Kill(u, true)
+					if BattleVisualBroadcaster.HpOnlyChanged then BattleVisualBroadcaster.HpOnlyChanged(u, "Dev", true)
+					elseif BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev kill") end
 					clearTileOccupant(u.tileX, u.tileY)
 					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
 				end
@@ -2134,7 +2243,16 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 			local hit = false
 			for _, u in ipairs(allUnitsList) do
 				if u.tileX == tx and u.tileY == ty and u.isAlive then
-					StatusService.ApplyStatus(u, sid, u.id)
+					-- BUG-300 (batch 29, Studio pass 20): Burn stores round(Fire Damage Dealt x burnFraction) (shared status
+					-- data, elements_statuses 57), and a dev grant deals no Fire damage, so it stored 0 and never ticked
+					-- ("ACCUMULATED (+0 stored ...)"). The grant now counts as one standard Fire hit: the Burning tile's
+					-- tick, round(Max HP x TILE_EFFECTS.Burning.tickDamage) (15%). Burn's own burnFraction (0.20) then gives
+					-- the stored amount (227 Max HP -> 34 Fire -> 7 stored). Other statuses unchanged.
+					local _grantFire = nil
+					if sid == "Burn" then
+						_grantFire = StatusService.StandardFireHitDamage(u)  -- BUG-301: shared helper
+					end
+					StatusService.ApplyStatus(u, sid, u.id, _grantFire)
 					-- D4 fix 2026-10-04: immediate feedback — rebuild stats (so stat-
 					-- changing statuses apply now, not next turn) + refresh the client.
 					if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
@@ -2211,13 +2329,26 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 
 		elseif cmd.action == "SetWeather" then
 			-- Force a weather/crisis condition immediately (dev only).
-			local cond = cmd.condition
-			if type(cond) ~= "string" or cond == "" then
-				warn("[Dev] SetWeather: need condition")
+			-- DEV batch 19: the name must be one of the 15 known conditions (WeatherConditionData), and an
+			-- optional holdCt (100..20000) keeps it from re-rolling at the next round (WeatherService hold).
+			-- BUG-238 (batch 19b): Studio only, like the other batch 19 dev commands.
+			if not devStudioOnly("SetWeather") then return end
+			local cond = devId(cmd.condition)
+			local _wcd = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("WeatherConditionData"))
+			if not cond or not _wcd.Get(cond) then
+				warn("[Dev] SetWeather: unknown condition " .. tostring(cmd.condition))
 				return
 			end
-			local ok = WeatherService.ForceCondition(cond, state)
-			if ok then print("[Dev] SetWeather -> " .. cond) end
+			local holdCt = nil
+			if cmd.holdCt ~= nil then
+				holdCt = devInt(cmd.holdCt, 100, 20000)
+				if not holdCt then
+					warn("[Dev] SetWeather: holdCt must be a whole number 100..20000")
+					return
+				end
+			end
+			local ok = WeatherService.ForceCondition(cond, state, holdCt)
+			if ok then print("[Dev] SetWeather -> " .. cond .. (if holdCt then string.format(" (held %d CT)", holdCt) else "")) end
 
 		elseif cmd.action == "SpawnUnit" or cmd.action == "SpawnGroup" then
 			-- Spawn one or more units (Player ally / Enemy / Neutral) near the selected
@@ -2232,7 +2363,9 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 			end
 			if side ~= "Enemy" and side ~= "Neutral" and side ~= "Player" then side = "Enemy" end
 			local lvl = cmd.level or 1
-			local spawnSide = (side == "Player") and "Neutral" or side
+			-- BUG-281 (batch 24): pass "Player" straight through, so EnemyGenerator sets and prints the real side
+			-- (it used to get "Neutral" here and print side=Neutral for a Player ally).
+			local spawnSide = side
 			local count = (cmd.action == "SpawnGroup") and math.clamp(tonumber(cmd.count) or 3, 1, 6) or 1
 			local devRng = Random.new(os.clock() * 1000)
 
@@ -2272,7 +2405,8 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 				local unit = EnemyGenerator.SpawnReinforcement(
 					{ type = tier, level = lvl }, { x = sx, y = sy }, state, devRng, spawnSide, cmd.raceOverride)
 				if unit then
-					if side == "Player" then unit.side = "Player"; unit.controller = "AI" end
+					-- BUG-281: side is already "Player" from SpawnReinforcement; only the controller is set here.
+					if side == "Player" then unit.controller = "AI" end
 					occupied[unit.tileX .. "," .. unit.tileY] = true
 					setTileOccupant(unit.tileX, unit.tileY, unit.name, "Unit (" .. unit.side .. ")", "Blocking")
 					if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitSpawned then
@@ -2300,6 +2434,344 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 				print(string.format("[Dev] SpawnObject %s at (%d,%d) -> %s", objType, tx, ty, inst.id))
 			else
 				warn(string.format("[Dev] SpawnObject failed (tile occupied by another object?) %s (%d,%d)", objType, tx, ty))
+			end
+
+		-- ===== DEV batch 19 (2026-11-23): Studio-only test-setup commands. They reuse existing services and
+		-- change no game rule. Documented in artifacts/DEV_batch19_20261123.md. =====
+		elseif cmd.action == "DevGivePassive" then
+			-- { unitId, passiveId, skillId? (AUG only), slot? (PAS only) }
+			--   Armor id (GL-/BD-/HD-/FT-/AC-) or weapon / off-hand archetype id -> a fresh item of it is made
+			--   (ItemGenerator, bonus lines cleared so only its own passive is on it), added to the inventory and
+			--   equipped (EquipmentService.Equip rebuilds stats).
+			--   PAS-xxx (bonus passive) -> added to a battle copy of the item in `slot` (default MainHand); the saved
+			--   inventory item is not changed.
+			--   AUG-xxx (skill augment) -> added to the augments of the loadout slot holding skillId (default slot2).
+			-- BUG-235 (batch 19b): battle only; the original slot items are kept in u._devRestoreSlots and put
+			-- back at battle end (right after the turn loop, before rewards/save). AUG changes stay (saved),
+			-- the same as DevSetSkillAugments.
+			if not devStudioOnly("DevGivePassive") or not devInBattle("DevGivePassive") then return end
+			-- Remember the slot's original item once per battle (false = slot was empty).
+			local function devRememberSlot(unit: any, s: string)
+				unit.equipmentSlots = unit.equipmentSlots or {}
+				unit._devRestoreSlots = unit._devRestoreSlots or {}
+				if unit._devRestoreSlots[s] == nil then
+					unit._devRestoreSlots[s] = unit.equipmentSlots[s] or false
+				end
+			end
+			local function devPutBackSlot(unit: any, s: string, item: any)
+				unit.equipmentSlots = unit.equipmentSlots or {}
+				unit.equipmentSlots[s] = item or nil
+			end
+			local u = devFindUnit(cmd.unitId)
+			local pid = devId(cmd.passiveId)
+			if not u or not pid then warn("[Dev] DevGivePassive: need a living unitId and a passiveId") return end
+			local armorArch = ArmorData.GetByArchetypeId(pid)
+			local weaponArch = (not armorArch) and WeaponData.GetByArchetypeId(pid) or nil
+			if armorArch or weaponArch then
+				local slot = if armorArch then armorArch.slot elseif weaponArch.category == "OffHand" then "OffHand" else "MainHand"
+				local lvl = math.clamp(math.floor(tonumber(u.level) or 1), 1, 99)
+				local item = ItemGenerator.Generate({ baseArchetypeId = pid, itemLevel = lvl, rarity = "Common",
+					seed = math.floor(os.clock() * 1000) % 1000000, sourceType = "Debug" })
+				if not item then warn("[Dev] DevGivePassive: could not make item " .. pid) return end
+				item.bonusPassiveIds = {}
+				item.bonusLines = {}
+				-- BUG-235: equip first; the item goes into the inventory only when the equip worked.
+				-- Equip may also clear OffHand (2H weapon), so both slots are remembered for undo / battle end.
+				local prevSlot = (u.equipmentSlots and u.equipmentSlots[slot]) or false
+				local prevOff = (u.equipmentSlots and u.equipmentSlots.OffHand) or false
+				local hadRestore = u._devRestoreSlots ~= nil
+				local ok, why = EquipmentService.Equip(u, item, slot)
+				if not ok then warn(string.format("[Dev] DevGivePassive: equip %s on %s failed: %s", pid, u.name, tostring(why))) return end
+				u._devRestoreSlots = u._devRestoreSlots or {}
+				if u._devRestoreSlots[slot] == nil then u._devRestoreSlots[slot] = prevSlot end
+				if slot ~= "OffHand" and u._devRestoreSlots.OffHand == nil then u._devRestoreSlots.OffHand = prevOff end
+				if u.side == "Player" then
+					local okAdd, added, addWhy = pcall(InventoryService.AddItem, PLAYER_ID, item)
+					if not okAdd or added ~= true then
+						warn(string.format("[Dev] DevGivePassive: inventory add of %s failed (%s); equip undone",
+							pid, tostring(if okAdd then addWhy else added)))
+						devPutBackSlot(u, slot, prevSlot)
+						if slot ~= "OffHand" then devPutBackSlot(u, "OffHand", prevOff) end
+						if not hadRestore then u._devRestoreSlots = nil end
+						EquipmentService.RebuildUnitStats(u)
+						if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
+						return
+					end
+				end
+				if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
+				print(string.format("[Dev] DevGivePassive %s: equipped %s (%s) in %s", u.name, pid,
+					tostring((armorArch or weaponArch).passiveDisplayName or (armorArch or weaponArch).name), slot))
+			elseif BonusData.GetPassive(pid) then
+				local slot = devId(cmd.slot) or "MainHand"
+				local cur = u.equipmentSlots and u.equipmentSlots[slot]
+				if not cur then warn(string.format("[Dev] DevGivePassive: %s has nothing in %s", u.name, slot)) return end
+				local copy = table.clone(cur)
+				copy.bonusPassiveIds = table.clone(cur.bonusPassiveIds or {})
+				table.insert(copy.bonusPassiveIds, pid)
+				devRememberSlot(u, slot)
+				u.equipmentSlots[slot] = copy
+				EquipmentService.RebuildUnitStats(u)
+				if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
+				print(string.format("[Dev] DevGivePassive %s: +%s on %s (battle copy; original goes back at battle end)", u.name, pid, slot))
+			elseif AugmentData[pid] then
+				local sk = devId(cmd.skillId)
+				u.skillLoadout = u.skillLoadout or {}
+				local slotRec = nil
+				for _, s in pairs(u.skillLoadout) do
+					if type(s) == "table" and sk and s.skillId == sk then slotRec = s; break end
+				end
+				if not slotRec then
+					if sk and not CommandService.GetSkill(sk) then warn("[Dev] DevGivePassive: unknown skill " .. sk) return end
+					slotRec = u.skillLoadout.slot2
+					if not slotRec or (sk and slotRec.skillId ~= sk) then
+						if not sk then warn("[Dev] DevGivePassive: AUG needs skillId (no slot2 skill)") return end
+						slotRec = { skillId = sk, augments = {} }
+						u.skillLoadout.slot2 = slotRec
+					end
+				end
+				slotRec.augments = slotRec.augments or {}
+				if not table.find(slotRec.augments, pid) then table.insert(slotRec.augments, pid) end
+				if slotRec.skillId and type(u.skillIds) == "table" and not table.find(u.skillIds, slotRec.skillId) then
+					table.insert(u.skillIds, slotRec.skillId)
+				end
+				print(string.format("[Dev] DevGivePassive %s: %s + [%s]", u.name, tostring(slotRec.skillId), table.concat(slotRec.augments, ",")))
+			else
+				warn("[Dev] DevGivePassive: unknown id " .. pid .. " (not armor, weapon, PAS- or AUG-)")
+			end
+
+		elseif cmd.action == "DevGiveShield" then
+			-- { unitId, amount (1..99999), durationCt? (100..20000, default 4000) } -> StatusService.ApplyShield
+			-- (same rules as a skill shield: replaces a normal shield; a bigger ward is kept).
+			if not devStudioOnly("DevGiveShield") or not devInBattle("DevGiveShield") then return end
+			local u = devFindUnit(cmd.unitId)
+			local amt = devInt(cmd.amount, 1, 99999)
+			local dur = if cmd.durationCt == nil then 4000 else devInt(cmd.durationCt, 100, 20000)
+			if not u or not amt or not dur then warn("[Dev] DevGiveShield: need a living unitId, amount 1..99999, durationCt 100..20000") return end
+			if StatusService.ApplyShield(u, amt, dur, "dev") then
+				if BattleVisualBroadcaster.ShieldChanged then BattleVisualBroadcaster.ShieldChanged(u, amt, "grant", "Dev") end
+				-- BUG-245 (batch 20, Studio pass 10): the new Shield status was left for the next caused change of this unit
+				-- to log, so it read "is now Shield (Rain)." after a Rain tick. The dev shield now logs it with its own
+				-- cause right away ("Dev"), so no later cause picks it up.
+				if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
+				print(string.format("[Dev] DevGiveShield %s: %d shield for %d CT (total %d)", u.name, amt, dur, u.shield_total or 0))
+			else
+				warn(string.format("[Dev] DevGiveShield %s: not applied (see the [StatusService] line)", u.name))
+			end
+
+		elseif cmd.action == "DevForceAiAction" then
+			-- { unitId, skillId ("Attack" or a skill id), targetId | tileX+tileY } or { unitId, clear = true }.
+			-- Stored on the unit and tried by its AI (BattleTurnController takeDevForcedAction), through the normal
+			-- ValidateAndCommit (range / MP / LoS still apply). Kept until it commits, can't be built, or is
+			-- cleared (BUG-275; comment reworded BUG-277).
+			if not devStudioOnly("DevForceAiAction") or not devInBattle("DevForceAiAction") then return end
+			local u = devFindUnit(cmd.unitId)
+			if not u then warn("[Dev] DevForceAiAction: need a living unitId") return end
+			if cmd.clear == true then
+				u._devForcedAction = nil
+				print("[Dev] DevForceAiAction cleared for " .. u.name)
+				return
+			end
+			if u.controller == "Player" then warn("[Dev] DevForceAiAction: " .. u.name .. " is player-controlled") return end
+			local sk = devId(cmd.skillId)
+			if not sk or (sk ~= "Attack" and not CommandService.GetSkill(sk)) then
+				warn("[Dev] DevForceAiAction: unknown skillId " .. tostring(cmd.skillId))
+				return
+			end
+			local f = { skillId = sk }
+			if cmd.targetId ~= nil then
+				-- BUG-293 (batch 27, Studio pass 18): a revive skill (targetRules "KO Unit") targets a KO'd unit, so the
+				-- living-only lookup refused it ("target not found"). For those skills the target must be KO'd instead;
+				-- f.koTarget tells BattleTurnController to look the target up among KO'd units. Range / MP / LoS and the
+				-- skill's own KO-target check still run in ValidateAndCommit.
+				local _skDef = if sk ~= "Attack" then CommandService.GetSkill(sk) else nil
+				if _skDef and _skDef.targetRules == "KO Unit" then
+					local _tid, t = devId(cmd.targetId), nil
+					for _, o in ipairs(allUnitsList) do
+						if _tid and o.id == _tid and o.isAlive == false then t = o; break end
+					end
+					if not t then warn("[Dev] DevForceAiAction: revive skill needs a KO'd targetId") return end
+					f.targetId = t.id
+					f.koTarget = true
+				else
+					local t = devFindUnit(cmd.targetId)
+					if not t then warn("[Dev] DevForceAiAction: target not found") return end
+					f.targetId = t.id
+				end
+			else
+				f.tileX = devInt(cmd.tileX, 1, MAP_WIDTH)
+				f.tileY = devInt(cmd.tileY, 1, MAP_HEIGHT)
+				if not f.tileX or not f.tileY then warn("[Dev] DevForceAiAction: need targetId or an on-map tileX/tileY") return end
+			end
+			if sk ~= "Attack" and type(u.skillIds) == "table" and not table.find(u.skillIds, sk) then
+				table.insert(u.skillIds, sk) -- same as DevSetSkillAugments: validation refuses skills the unit lacks
+			end
+			u._devForcedAction = f
+			print(string.format("[Dev] DevForceAiAction %s: next AI action = %s on %s", u.name, sk,
+				if f.targetId then f.targetId else string.format("(%d,%d)", f.tileX, f.tileY)))
+
+		elseif cmd.action == "DevSetTile" then
+			-- { tileX, tileY, terrainId?, elevation? (1..20), chasm? (true/false) } -> GameConstants tile maps +
+			-- the same visual/broadcast calls the Energy Bridge restore uses. Units on it stay put (no fall damage).
+			if not devStudioOnly("DevSetTile") or not devInBattle("DevSetTile") then return end
+			local tx, ty = devInt(cmd.tileX, 1, MAP_WIDTH), devInt(cmd.tileY, 1, MAP_HEIGHT)
+			if not tx or not ty then warn("[Dev] DevSetTile: need an on-map tileX/tileY") return end
+			local terrain = GameConstants.GetTerrainId(tx, ty)
+			if cmd.terrainId ~= nil then
+				local tid = devId(cmd.terrainId)
+				if not tid or not GameConstants.TERRAIN_TYPES[tid] then warn("[Dev] DevSetTile: unknown terrainId " .. tostring(cmd.terrainId)) return end
+				terrain = tid
+			end
+			local elev = GameConstants.GetElevation(tx, ty)
+			if cmd.elevation ~= nil then
+				elev = devInt(cmd.elevation, 1, 20)
+				if not elev then warn("[Dev] DevSetTile: elevation must be a whole number 1..20") return end
+			end
+			-- BUG-291 (batch 27, Studio pass 18): chasm = true kept the tile's old height ("elev=5 chasm=true" between
+			-- elevation-5 tiles), so the AI walked onto those "chasms" and stood there. Now: (1) refused while a living
+			-- unit stands on the tile (nothing changes; move it first); (2) with no elevation given, the floor is sunk the
+			-- way map gen does it (ElevationPass Phase 7): the lowest cardinal neighbour that is not a chasm floor and not
+			-- Deep / Molten, minus the gap depth (this map's cliffDrop, at least 2), at least 1. An elevation the command
+			-- gives is used as is.
+			local _chasmNote = ""
+			if cmd.chasm == true then
+				for _, o in ipairs(allUnitsList) do
+					if o.isAlive and o.tileX == tx and o.tileY == ty then
+						warn(string.format("[Dev] DevSetTile (%d,%d) chasm=true refused: %s stands there (move it off first)", tx, ty, tostring(o.name)))
+						return
+					end
+				end
+				if cmd.elevation == nil then
+					local _ea = generatedMap and generatedMap.elevationAudit
+					local _depth = math.max(2, (_ea and tonumber(_ea.cliffDrop)) or 2)
+					-- Same neighbour filter as ElevationPass Phase 7: terrain tagged Deep or Molten is not a bank.
+					local function _deepOrMolten(nx: number, ny: number): boolean
+						local tt = GameConstants.TERRAIN_TYPES[GameConstants.GetTerrainId(nx, ny)]
+						for _, tg in ipairs((tt and tt.tags) or {}) do
+							if tg == "Deep" or tg == "Molten" then return true end
+						end
+						return false
+					end
+					local _minN = nil
+					for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+						local nx, ny = tx + d[1], ty + d[2]
+						if nx >= 1 and ny >= 1 and nx <= MAP_WIDTH and ny <= MAP_HEIGHT
+							and not GameConstants.IsChasmFloor(nx, ny) and not _deepOrMolten(nx, ny) then
+							local ne = GameConstants.GetElevation(nx, ny)
+							if _minN == nil or ne < _minN then _minN = ne end
+						end
+					end
+					if _minN ~= nil then
+						elev = math.max(1, _minN - _depth)
+						_chasmNote = string.format(" (chasm floor: lowest bank %d - depth %d)", _minN, _depth)
+						if _minN - elev < 2 then
+							warn(string.format("[Dev] DevSetTile (%d,%d): chasm floor can only sink to %d, %d below its lowest bank (%d) -- shallower than a real chasm",
+								tx, ty, elev, _minN - elev, _minN))
+						end
+					else
+						_chasmNote = " (chasm floor: no bank next to it, height kept)"
+					end
+				end
+			end
+			GameConstants.SetTerrainId(tx, ty, terrain)
+			GameConstants.ELEVATION_MAP[ty] = GameConstants.ELEVATION_MAP[ty] or {}
+			GameConstants.ELEVATION_MAP[ty][tx] = elev
+			-- BUG-244 (batch 20, Studio pass 10): with no chasm field the tile kept whatever chasm flag it had, so setting a
+			-- chasm tile to Ice printed "chasm=true". Now only chasm = true makes a chasm floor; no field (or false) clears it.
+			if cmd.chasm == true then
+				GameConstants.CHASM_FLOOR_MAP[ty] = GameConstants.CHASM_FLOOR_MAP[ty] or {}
+				GameConstants.CHASM_FLOOR_MAP[ty][tx] = true
+			elseif GameConstants.CHASM_FLOOR_MAP[ty] then
+				GameConstants.CHASM_FLOOR_MAP[ty][tx] = nil
+			end
+			ObjectEffectService.LowerTileVisual(tx, ty, terrain, elev)
+			if BattleVisualBroadcaster.TerrainChanged then BattleVisualBroadcaster.TerrainChanged(tx, ty, terrain, elev) end
+			for _, u in ipairs(allUnitsList) do
+				if u.isAlive and u.tileX == tx and u.tileY == ty then BattleEvents.UnitMoved:FireAllClients({ unitId = u.id, tileX = u.tileX, tileY = u.tileY }) end
+			end
+			print(string.format("[Dev] DevSetTile (%d,%d): terrain=%s elev=%d chasm=%s%s", tx, ty, terrain, elev,
+				tostring(GameConstants.IsChasmFloor(tx, ty)), _chasmNote))
+
+		elseif cmd.action == "DevGiveTrait" then
+			-- BUG-292 (batch 27, Studio pass 18 test hook): { unitId, traitId } gives a living non-player unit one perk or
+			-- flaw for this battle (trait id such as "TRAIT-F-131", or its exact name such as "Hemophage"). Studio +
+			-- DevAccess only; every field is re-checked here. Same steps as the Altar of Change trait swap (setTrait
+			-- above): the id goes on perkIds / drawbackIds (added, the unit keeps its other traits), then
+			-- EquipmentService.RebuildUnitStats. The saved-record sync (LoadoutRequestHandlers.SyncPersistentResources) is
+			-- NOT called: it is for out-of-battle rebuilds and would copy the saved HP onto the battle unit. Player units
+			-- are refused (their traits are saved with the roster; use the Altar of Change / Mutation Bench for that).
+			-- A unit at full HP / MP stays full; the client gets the new state with no log diff, plus one "[Dev]" line.
+			if not devStudioOnly("DevGiveTrait") or not devInBattle("DevGiveTrait") then return end
+			local u = devFindUnit(cmd.unitId)
+			if not u then warn("[Dev] DevGiveTrait: need a living unitId") return end
+			if u.side == "Player" then
+				warn("[Dev] DevGiveTrait: " .. tostring(u.name) .. " is a player unit (traits are saved with the roster); refused")
+				return
+			end
+			local key = devId(cmd.traitId)
+			if not key then warn("[Dev] DevGiveTrait: need a traitId (trait id or exact trait name)") return end
+			local tid, tdef = nil, TraitData.GetTrait(key)
+			if tdef then
+				tid = key
+			else
+				local lk, hits = string.lower(key), {}
+				for id, t in pairs(TraitData.Traits or {}) do
+					if type(t) == "table" and type(t.name) == "string" and string.lower(t.name) == lk then table.insert(hits, id) end
+				end
+				table.sort(hits)
+				if #hits > 1 then
+					warn("[Dev] DevGiveTrait: name '" .. key .. "' matches " .. table.concat(hits, ", ") .. "; use the trait id")
+					return
+				end
+				tid = hits[1]
+				tdef = tid and TraitData.GetTrait(tid) or nil
+			end
+			if not tdef or (tdef.kind ~= "perk" and tdef.kind ~= "flaw") then
+				warn("[Dev] DevGiveTrait: unknown trait " .. key)
+				return
+			end
+			local listKey = if tdef.kind == "perk" then "perkIds" else "drawbackIds"
+			if type(u[listKey]) ~= "table" then u[listKey] = {} end
+			if table.find(u[listKey], tid) then
+				print(string.format("[Dev] DevGiveTrait %s: already has %s (%s)", u.name, tostring(tdef.name), tid))
+				return
+			end
+			local wasFullHp = u.currentHp ~= nil and u.maxHp ~= nil and u.currentHp >= u.maxHp
+			local wasFullMp = u.currentMp ~= nil and u.maxMp ~= nil and u.currentMp >= u.maxMp
+			table.insert(u[listKey], tid)
+			EquipmentService.RebuildUnitStats(u)
+			if wasFullHp then u.currentHp = u.maxHp end
+			if wasFullMp then u.currentMp = u.maxMp end
+			if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, BattleVisualBroadcaster.SILENT) end
+			if BattleVisualBroadcaster.Log then BattleVisualBroadcaster.Log("info", string.format("[Dev] %s gains trait %s.", u.name, tostring(tdef.name)), u.id) end
+			print(string.format("[Dev] DevGiveTrait %s: + %s (%s, %s) | HP %d/%d", u.name, tostring(tdef.name), tid, tdef.kind,
+				u.currentHp or 0, u.maxHp or 0))
+
+		elseif cmd.action == "DevRunQuitSave" then
+			-- Batch 21 / BUG-261 test hook: prints what the quit save would write (roster built on cloned rows,
+			-- 'would restore N slot(s)') without saving, restoring gear or stopping Play. Studio only.
+			if not devStudioOnly("DevRunQuitSave") then return end
+			if devRunQuitSave then
+				devRunQuitSave()
+			else
+				warn("[Dev] DevRunQuitSave: not ready yet (boot not finished)")
+			end
+
+		elseif cmd.action == "DevSetDebug" then
+			-- Batch 21 test hook: { flag = "KillCredit", on = true|false } flips a debug server print. Studio only.
+			-- BUG-286 (batch 26, Studio pass 17): "enabled" is accepted too (on wins when both are sent). The old
+			-- "flag and SetDebugFlag(...) or nil" turned a real false result (on not sent) into nil, so a known flag
+			-- was reported as "unknown flag KillCredit (known: KillCredit)". The result is now checked as is.
+			if not devStudioOnly("DevSetDebug") then return end
+			local flag = devId(cmd.flag)
+			local onArg = if cmd.on ~= nil then cmd.on else cmd.enabled
+			local res = nil
+			if flag and BattleVisualBroadcaster.SetDebugFlag then
+				res = BattleVisualBroadcaster.SetDebugFlag(flag, onArg == true)
+			end
+			if res == nil then
+				warn("[Dev] DevSetDebug: unknown flag " .. tostring(cmd.flag) .. " (known flags: KillCredit; send on=true or enabled=true)")
+			else
+				print(string.format("[Dev] DevSetDebug %s = %s", tostring(flag), tostring(res)))
 			end
 		end
 	end)
@@ -2354,6 +2826,8 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 				minRange  = profile and profile.minRange or 1,
 				maxRange  = profile and profile.maxRange or 1,
 				pattern   = profile and profile.pattern or "Single",
+				-- batch 8b (W4): player label for the inspector Pattern row; nil = Single (DAT-001)
+				patternLabel = if profile and profile.pattern and profile.pattern ~= "Single" then WeaponData.GetPatternLabel(profile.pattern) else nil,
 				bonusLines = itemInst.bonusLines or {},
 				resolvedBonus = (function() local s, p = ItemDisplay.resolveItemBonuses(itemInst); return {stats = s, passives = p} end)(),
 				-- Player-facing name, not the internal id (2026-10-30).
@@ -2731,6 +3205,32 @@ GuildMenuService.Init({
 	end,
 })
 
+-- BUG-240 (batch 19c): put back the slot items that dev DevGivePassive replaced (u._devRestoreSlots).
+-- Called at battle end and at the start of saveOnQuit, so a mid-battle stop never saves dev gear.
+local function devRestoreGear()
+	local seen = {}
+	-- BUG-261 (batch 21b, Tester W3): pairs, not ipairs. playerUnits is keyed by unit id, so ipairs never visited it
+	-- (dev gear given outside a battle was never put back). allUnitsList is an array; pairs covers it too.
+	for _, list in ipairs({ allUnitsList or {}, playerUnits or {} }) do
+		for _, u in pairs(list) do
+			if not seen[u] and type(u._devRestoreSlots) == "table" then
+				seen[u] = true
+				u.equipmentSlots = u.equipmentSlots or {}
+				for s, orig in pairs(u._devRestoreSlots) do
+					u.equipmentSlots[s] = orig or nil
+				end
+				u._devRestoreSlots = nil
+				local okR, errR = pcall(EquipmentService.RebuildUnitStats, u)
+				if okR then
+					print(string.format("[Dev] DevGivePassive: original gear restored on %s", tostring(u.name)))
+				else
+					warn(string.format("[Dev] DevGivePassive: restore rebuild failed on %s: %s", tostring(u.name), tostring(errR)))
+				end
+			end
+		end
+	end
+end
+
 -- SAVE ON QUIT (2026-10-31, user decision). Guild-base changes are normally written
 -- when the player leaves the base (GuildMenuService.Close). If the player quits, or the
 -- server shuts down, while still at the base, write them now. Saves ONLY when there are
@@ -2739,6 +3239,7 @@ GuildMenuService.Init({
 -- close mid-write. SaveService still refuses to save if this session's load failed.
 local quitSaveState = "none" -- "none" | "running" | "done"
 local function saveOnQuit(reason: string)
+	pcall(devRestoreGear) -- BUG-240: never save dev gear on a mid-battle stop
 	if quitSaveState == "none" then
 		quitSaveState = "running"
 		local ok, err = pcall(GuildMenuService.SaveIfDirty, reason)
@@ -2780,6 +3281,11 @@ LoadoutRequestHandlers.Init({
 	doSave = function(...) return doSave(...) end,
 	PLAYER_ID = PLAYER_ID,
 })
+-- BUG-170 (batch 13): base-side roster rebuilds in GuildMenuService (furniture, Apothecary, Blacksmith item
+-- level) now go through the ONE shared HP/MP sync helper. The boot rebuild inside GuildMenuService.Init
+-- (FurnitureService.Init applies the furniture Max HP) ran above, before this helper existed, so sync every
+-- roster unit once now: the saved record then holds the same max HP as the live unit the battle uses.
+GuildMenuService.SetResourceSync(LoadoutRequestHandlers.SyncPersistentResources)
 -- DUNGEON LOADOUT (silver/Bag step 3, 2026-11-16; rules 265/266/279): loadout changes for units in the active
 -- dungeon party go through the run's Bag (DungeonLoadout, routed by the LoadoutRequestHandlers gate), and Bag
 -- consumables can be used on the map. Scoped in do-end: no new Main top-level local.
@@ -3030,6 +3536,12 @@ for _, u in pairs(playerUnits) do
 		establishPlayerUnitFromSave(u)
 	end
 end
+-- BUG-170 (batch 13b): sync saved HP/MP with the fully set-up live units (roster is filled only now).
+for uid, u in pairs(playerUnits) do
+	if u.side == "Player" then
+		LoadoutRequestHandlers.SyncPersistentResources(uid, u)
+	end
+end
 
 -- Renown old-save conversion (step 2, loot_progression 93): once, after the boot roster and
 -- the saved unit levels are restored. Own block (Main is close to the Luau local limit).
@@ -3145,9 +3657,19 @@ end)
 -- defined ONCE here, before the loop. This lets base write-actions (hire/buy/sell/
 -- upgrade/dispatch) on round 1 — before any quest launches — persist without hitting
 -- a nil doSave. The GuildMenu/Loadout Init lazy wrappers resolve to this definition.
-function doSave()
+-- Batch 21: the roster part of the save (unit state + equipment / race / doctrine fields), shared by doSave and the
+-- Studio test hook DevRunQuitSave, so the hook prints exactly what a save would write. Same code as before.
+-- BUG-261 (batch 21b, Tester W3): cloneRows = true (DevRunQuitSave only) works on shallow copies of the rows, because
+-- ExportState returns the live PersistentStateService table. doSave passes nothing, so the save is unchanged.
+local function buildRosterSaveState(cloneRows: boolean?)
 	local rosterState = PersistentStateService.ExportState(PLAYER_ID)
-	local inventoryItems = InventoryService.ExportInventory(PLAYER_ID)
+	if cloneRows == true and type(rosterState) == "table" then
+		local _copy = {}
+		for id, row in pairs(rosterState) do
+			_copy[id] = if type(row) == "table" then table.clone(row) else row
+		end
+		rosterState = _copy
+	end
 	-- Enrich roster with equipment slot assignments (instanceIds only)
 	for unitId, unit in pairs(playerUnits) do
 		if rosterState[unitId] and unit.equipmentSlots then
@@ -3180,6 +3702,65 @@ function doSave()
 			rosterState[unitId].bodyColor = unit.bodyColor or nil
 		end
 	end
+	return rosterState
+end
+
+-- Batch 21 test hook (Studio dev command DevRunQuitSave): what the quit save would write, without saving or stopping
+-- Play. BUG-261 (batch 21b, Tester W3): it no longer changes the live game. It does NOT run devRestoreGear (dev gear
+-- stays on); it prints "would restore N slot(s)" instead and shows the original items in the printed equipment, as
+-- saveOnQuit would write them after its devRestoreGear (BUG-240). The roster is built on cloned rows.
+devRunQuitSave = function()
+	local okB, roster = pcall(buildRosterSaveState, true)
+	if not okB or type(roster) ~= "table" then
+		warn("[DevRunQuitSave] roster build failed: " .. tostring(roster))
+		return
+	end
+	local _wouldRestore = 0
+	for unitId, u in pairs(playerUnits or {}) do
+		if type(u) == "table" and type(u._devRestoreSlots) == "table" then
+			local row = roster[unitId]
+			local slots = if type(row) == "table" and type(row.equipSlots) == "table" then table.clone(row.equipSlots) else {}
+			local n = 0
+			for s, orig in pairs(u._devRestoreSlots) do
+				slots[s] = if type(orig) == "table" then orig.instanceId else nil
+				n += 1
+			end
+			if type(row) == "table" then row.equipSlots = slots end  -- cloned row: the live state is not touched
+			_wouldRestore += n
+			print(string.format("[DevRunQuitSave] would restore %d slot(s) on %s (dev gear left on)", n, tostring(u.name)))
+		end
+	end
+	for _, u in ipairs(allUnitsList or {}) do
+		if type(u) == "table" and type(u._devRestoreSlots) == "table" and not (u.id ~= nil and playerUnits and playerUnits[u.id] == u) then
+			local n = 0
+			for _ in pairs(u._devRestoreSlots) do n += 1 end
+			_wouldRestore += n
+			print(string.format("[DevRunQuitSave] would restore %d slot(s) on %s (battle unit, not in the roster; dev gear left on)", n, tostring(u.name)))
+		end
+	end
+	print(string.format("[DevRunQuitSave] would restore %d slot(s) in total", _wouldRestore))
+	local ids = {}
+	for unitId in pairs(roster) do table.insert(ids, unitId) end
+	table.sort(ids)
+	for _, unitId in ipairs(ids) do
+		local slots = roster[unitId].equipSlots
+		local parts = {}
+		if type(slots) == "table" then
+			local keys = {}
+			for slot in pairs(slots) do table.insert(keys, slot) end
+			table.sort(keys)
+			for _, slot in ipairs(keys) do table.insert(parts, slot .. ":" .. tostring(slots[slot])) end
+		end
+		local u = playerUnits[unitId]
+		print(string.format("[DevRunQuitSave] Equipment: %s (%s) = %s", tostring(unitId), tostring(u and u.name or "?"),
+			if #parts > 0 then table.concat(parts, ",") else "(none)"))
+	end
+	print(string.format("[DevRunQuitSave] done: %d unit(s); nothing saved, Play still running", #ids))
+end
+
+function doSave()
+	local rosterState = buildRosterSaveState()
+	local inventoryItems = InventoryService.ExportInventory(PLAYER_ID)
 	-- Diagnostic: log equipment slot assignments being saved
 	for unitId, unitState in pairs(rosterState) do
 		if unitState.equipSlots then
@@ -3804,6 +4385,9 @@ while true do
 	-- Round 2 terrain pass (2026-09-29): pathfinding/hit-quality/slide services also
 	-- need the TileEffectService reference (Tar Pit move cost, Steam evasion, Oily slide).
 	TargetingService.SetTileEffectService(TileEffectService)
+	-- BUG-144 (BUG-HUNT-05): Move refuses a tile the unit could not walk off -- the same walk-exit check
+	-- Skyfall Lance landings use (CommandService, BUG-120 / BUG-130), injected (ARC-004).
+	TargetingService.SetWalkExitCheck(CommandService.LandingHasWalkExit)
 	CombatResolver.SetTileEffectService(TileEffectService)
 	TileCrossEffectService.SetTileEffectService(TileEffectService)
 
@@ -4478,8 +5062,10 @@ end)
 	local questDeployLimit = math.max(1, math.floor((selectedQuest and selectedQuest.playerSlots) or 7))
 	if dungeonBattle then
 		-- step 7b: only 7 fight (rule 265); RL-17 War Banner: 8 (stages part 3, 2026-11-15, rule 271).
+		-- BUG-124 (BUG-HUNT-02): the limit IS the rule-265 cap. It used to be min(random quest slots, 7),
+		-- so normal rooms allowed 5 while the run (deployMax) promised 7.
 		local _cap = DungeonRules.Data.DeployMax + (if table.find(DungeonService.GetRelics(PLAYER_ID), "RL-17") then DungeonRules.Data.Relic.BannerDeployBonus else 0)
-		questDeployLimit = if _cap > DungeonRules.Data.DeployMax then _cap else math.min(questDeployLimit, _cap)
+		questDeployLimit = _cap
 	end
 	local desiredTiles     = math.ceil(questDeployLimit * 1.5)
 	local deployAnchorsToShow = {}
@@ -4620,12 +5206,18 @@ end)
 		ensurePlayerModelBuilt(u, idx)
 	end
 
+	-- BUG-122 (BUG-HUNT-03): ids of the units placeable this battle, so they are not also sent as away.
+	local _placeableIds = {}
+	for _, u in ipairs(allUnitsList) do
+		if u.side == "Player" and u.id then table.insert(_placeableIds, u.id) end
+	end
 	BattleEvents.DeploymentPhase:FireAllClients({
 		playerAnchors = deployAnchorsToShow,
 		enemyUnits    = serializeForDeployment(allUnitsList, "Enemy"),
 		playerUnits   = serializeForDeployment(allUnitsList, "Player"),
 		awayUnits     = GuildMenuService.GetAwayUnitsForDeployment({ dungeon = dungeonBattle == true, -- 2026-11-21: chosen party only
-			partyMembers = if dungeonBattle then (dungeonParty or {}) else PartyService.GetMembers(PLAYER_ID, chosenPartySlot or "") }), -- greyed out, not placeable
+			partyMembers = if dungeonBattle then (dungeonParty or {}) else PartyService.GetMembers(PLAYER_ID, chosenPartySlot or ""),
+			excludeIds = _placeableIds }), -- greyed out, not placeable
 		mapWidth      = MAP_WIDTH,
 		mapHeight     = MAP_HEIGHT,
 		-- Max units the player may actually DEPLOY this battle (quest playerSlots),
@@ -4851,6 +5443,7 @@ end)
 
 	-- === BATTLE START ===
 	state = BattleCoordinator.CreateBattleState(allUnitsList)
+	CommandService.ClearRejectCodes() -- BUG-164: no refusal code carries over from an earlier battle
 	-- Treasure/reward context (fix 2026-10-24): stamp the owning player id and the
 	-- map level onto the battle state so object handlers that generate rewards
 	-- (Treasure Chest, Cursed Chest via _grantChestReward, Black Market) can reach
@@ -4870,6 +5463,11 @@ end)
 		if BattleVisualBroadcaster.StatusExpired then BattleVisualBroadcaster.StatusExpired(unit, statusId) end
 		-- Status-only sync: no battle-log HP diff mid-hit (was an "uncaused hpLoss" warn, sweep 2026-11-06).
 		if BattleVisualBroadcaster.StatusSync then BattleVisualBroadcaster.StatusSync(unit) end
+	end)
+	-- BUG-140 (BUG-HUNT-09 / 16): statuses that run out on their own (turn / CT expiry) are recorded in the
+	-- battle log at once, with no cause, instead of picking up the next unrelated broadcast's cause.
+	StatusService.SetExpiredHandler(function(unit, statusId)
+		BattleVisualBroadcaster.StatusWoreOff(unit, statusId)
 	end)
 
 	-- Slice 5 map objects: seed the battle state with the generated map's placed
@@ -5454,6 +6052,11 @@ end)
 		local dotEvents = state.dotEvents or {}
 		state.dotEvents = nil
 
+		-- BUG-302 (batch 30, Studio pass 21): the tick lines below (and the Phase Break lines after them) are held
+		-- and sent right after this unit's turn header (BattleVisualBroadcaster.TurnStarted), matching the server
+		-- log, which prints the header first. The dead-by-DoT branch below has no header and releases them itself.
+		BattleVisualBroadcaster.HoldTurnStartLines()
+
 		for _, dot in ipairs(dotEvents) do
 			if activeUnit.isAlive then
 				local actual = UnitSchema.ApplyDamage(activeUnit, dot.damage)
@@ -5464,6 +6067,35 @@ end)
 					activeUnit.isAlive and "" or " | DEFEATED"
 				))
 				BattleVisualBroadcaster.DotDamage(activeUnit, dot.statusId, actual)
+			end
+		end
+		-- BUG-297 (batch 29, Studio pass 20): the dev God Mode HP refill of this turn happens AFTER its DoT tick,
+		-- so the tick shows the real HP (Burn on 114/227 now reads 107/227, not 220/227). BattleCoordinator
+		-- refilled MP/AP at turn start and left the HP for here. Silent sync, same as the turn-start refill.
+		if activeUnit._godHpRefillPending then
+			activeUnit._godHpRefillPending = nil
+			if activeUnit.isAlive and UnitSchema.IsGodProtected(activeUnit) then
+				local _gHp0 = activeUnit.currentHp
+				activeUnit.currentHp = activeUnit.maxHp or activeUnit.currentHp
+				if _gHp0 ~= activeUnit.currentHp then
+					print(string.format("[Dev] God mode turn refill %s: HP %d->%d (after start-of-turn DoT)",
+						tostring(activeUnit.name), _gHp0 or 0, activeUnit.currentHp or 0))
+				end
+				BattleVisualBroadcaster.UnitStateChanged(activeUnit, BattleVisualBroadcaster.SILENT)
+			end
+		end
+		-- BUG-162 (batch 12b, core_stats 46): a turn-start DoT tick that takes a boss across a phase
+		-- threshold breaks it right here (debuffs halved / trimmed before the skip-turn check below),
+		-- not at the next shown action batch. Same log text as BattleTurnController (loadout_ui_spec 132).
+		if activeUnit.isAlive and GameConstants.IsBoss(activeUnit) then
+			local _pbCrossed, _pbRemoved = StatusService.CheckBossPhaseBreak(activeUnit)
+			if _pbCrossed > 0 then
+				BattleVisualBroadcaster.Log("info", `{activeUnit.name}: Phase Break!`, activeUnit.id)
+				-- BUG-168 (batch 13): each removed debuff gets the existing expiry line right after the break line
+				-- (same path as BattleTurnController); the sync below then has nothing left to describe for them.
+				for _, sid in ipairs(_pbRemoved or {}) do BattleVisualBroadcaster.StatusWoreOff(activeUnit, sid) end
+				BattleVisualBroadcaster.UnitStateChanged(activeUnit)
+				BattleVisualBroadcaster.FlushLog()
 			end
 		end
 
@@ -5496,6 +6128,7 @@ end)
 
 		-- If unit died to DoT
 		if not activeUnit.isAlive then
+			BattleVisualBroadcaster.ReleaseTurnStartLines()  -- BUG-302: no turn header for a unit the tick KO'd
 			clearTileOccupant(activeUnit.tileX, activeUnit.tileY)
 			if activeUnit.isChanneling then
 				BattleCoordinator.InterruptChanneling(activeUnit, "death")
@@ -5515,6 +6148,11 @@ end)
 				activeUnit.name, skipReason,
 				activeUnit.currentHp, activeUnit.maxHp
 			))
+			-- BUG-275 (batch 23): a pending DevForceAiAction is kept through a skipped turn; say so.
+			if activeUnit._devForcedAction ~= nil then
+				warn(string.format("[Dev] DevForceAiAction for %s not used: turn skipped (%s); kept for its next turn",
+					activeUnit.name, tostring(skipReason)))
+			end
 			BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
 			-- Statuses count down ONCE, inside BattleCoordinator.EndTurn (2026-10-26). The extra
 			-- TickStatuses call that used to sit here made skipped-turn statuses wear off twice as fast.
@@ -5630,6 +6268,11 @@ end)
 			else
 				actions = BattleTurnController.runAiTurn(activeUnit)
 			end
+			-- BUG-275 (batch 23): this turn did not reach the AI loop (Fear used the AP, or a channel landed); say why.
+			if activeUnit._devForcedAction ~= nil and activeUnit.controller ~= "Player" and (fearEndedTurn or wasChanneling) then
+				warn(string.format("[Dev] DevForceAiAction for %s not used: %s; kept for its next turn",
+					activeUnit.name, if fearEndedTurn then "Fear used its AP" else "its channel landed this turn"))
+			end
 
 			-- Broadcast
 			if activeUnit.controller ~= "Player" or wasChanneling then
@@ -5692,6 +6335,8 @@ end)
 		end
 	end
 	battleRunning = false  -- turn loop finished: dev battle commands are ignored again (2026-11-08)
+	-- BUG-235 (batch 19b) / BUG-240 (batch 19c): put back dev DevGivePassive gear before rewards and the save.
+	devRestoreGear()
 	BattleEvents.EscapeState:FireClient(player, { available = false, allowed = false }) -- Escape button off
 
 	--------------------------------------------------
@@ -6184,6 +6829,18 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 		end
 	end
 
+	-- BUG-223 (batch 18b, Tester advisory on BUG-218): statuses end with the battle. Clear every status still on a
+	-- player roster unit and rebuild BEFORE HP/MP are saved, so a unit still Weakened (or under any stat status)
+	-- does not save a lowered Max HP. Current HP is only capped, never raised (rule 20). Recovery / ClearAllKO
+	-- order below (BUG-071) is unchanged.
+	for _, u in ipairs(allUnitsList) do
+		if u.side == "Player" and playerUnits[u.id] and u.statusInstances and #u.statusInstances > 0 then
+			u.statusInstances = {}
+			u._weaponFrozen = nil  -- BUG-230 (batch 18c, Tester A4): the Frozen it marked is gone, so the flag goes too
+			EquipmentService.RebuildUnitStats(u)
+		end
+	end
+
 	-- Step 1: Persist final HP/MP for all player ROSTER units. Player-side summons and item
 	-- devices are not roster members and must not get a persistent record (2026-11-06).
 	for _, u in ipairs(allUnitsList) do
@@ -6248,6 +6905,14 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 		PersistentStateService.ClearAllKO(PLAYER_ID)
 	else
 		PersistentStateService.ClearAllKO(PLAYER_ID, function(id) return DungeonService.IsUnitLocked(PLAYER_ID, id) end)
+	end
+	-- BUG-129 (2026-11-22, real HUNT-01 gap): steps 2a/2b change the SAVED record only (35% recovery,
+	-- KO -> 1 HP), so the live roster unit kept its battle-end HP/MP and the Units screen showed a
+	-- value the next battle would not use. Mirror the record onto every roster unit through the one
+	-- shared helper (syncPersistentResources; BUG-088/092). Max HP/MP already match the record here
+	-- (PersistBattleEnd), so UpdateMaxResources is a no-op and the BUG-092 free heal is untouched.
+	for uid, u in pairs(playerUnits) do
+		LoadoutRequestHandlers.SyncPersistentResources(uid, u)
 	end
 
 	--------------------------------------------------
@@ -6685,12 +7350,14 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 	for _, u in pairs(playerUnits) do
 		u.tileX = 0
 		u.tileY = 0
+		if u.statusInstances and #u.statusInstances > 0 then u.statusInstances = {} end  -- BUG-223: no battle status in the base rebuild
 		EquipmentService.RebuildUnitStats(u)
 		-- BUG-070: keep the saved HP/MP record in step with the rebuilt max (rules 19/20),
 		-- as every other out-of-battle rebuild does. KO is already cleared to 1 HP (BUG-071).
-		if u.maxHp and u.maxMp then
-			PersistentStateService.UpdateMaxResources(PLAYER_ID, u.id, u.maxHp, u.maxMp)
-		end
+		-- BUG-135 (Tester UAT batch 9b W1): the ONE shared sync helper (nil-guard, UpdateMaxResources,
+		-- then mirror record -> live), so a max-HP change from leaving the map reaches the live unit too
+		-- (GetUnitFullStats = Units / Loadout). Idempotent with the step-2b sync above (BUG-129).
+		LoadoutRequestHandlers.SyncPersistentResources(u.id, u)
 	end
 	doSave()
 	print(`[Hub] Battle complete (mode: {betweenBattleMode}) — auto-saved; returning to base.`)

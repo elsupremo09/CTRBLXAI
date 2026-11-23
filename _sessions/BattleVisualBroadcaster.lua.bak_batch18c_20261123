@@ -1,0 +1,2170 @@
+-- BattleVisualBroadcaster.lua
+-- CTRBLXAI | Slice 3
+--
+-- Server-side broadcaster. Fires RemoteEvents for the client to render.
+--
+-- Slice 3 additions:
+--   - DotDamage event (Poison/Burn tick at start of turn)
+--   - HealingApplied event
+--   - SkillCardData event (sends available skills to client)
+--   - TargetHighlight event (sends valid target tiles for highlighting)
+--   - serializeUnit includes MP and skillIds
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local BattleEvents = require(
+	ReplicatedStorage
+		:WaitForChild("CTRBLXAI")
+		:WaitForChild("Remotes")
+		:WaitForChild("BattleEvents")
+)
+
+local GameConstants = require(
+	ReplicatedStorage
+		:WaitForChild("CTRBLXAI")
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
+
+local StatusService = require(
+	game:GetService("ServerScriptService")
+		:WaitForChild("Game")
+		:WaitForChild("StatusService")
+)
+
+local DoctrineData = require(
+	ReplicatedStorage
+		:WaitForChild("Content")
+		:WaitForChild("DoctrineData")
+)
+
+local RaceData = require(
+	ReplicatedStorage
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
+
+local BattleVisualBroadcaster = {}
+
+--------------------------------------------------
+-- BATTLE LOG (server-authored, 2026-10-08)
+-- Single source of truth for the in-game battle log. Every line is built
+-- here and fired as BattleLogEntry { t = turn#, c = category, x = text,
+-- u = unitId }. The client only displays entries (NET-001, NET-003).
+-- Categories: turn | action | rt | status | ko | channel | field | info
+--------------------------------------------------
+
+local _logTurn = 0
+-- BUG-HUNT-07 diagnostic switch (see TurnStarted). Flip to true only for a Studio repro; no gameplay effect.
+local DEBUG_SILENT_HP = false
+
+local function unitName(u)
+	return (u and u.name) or "?"
+end
+
+-- BUG-172 (batch 14): while a counter resolves inside a held hit command (BeginHitReaction), its log
+-- lines are captured here instead of sent, and go out right AFTER the hit line that provoked it
+-- (UnitActed). nil = lines are sent at once, as before.
+local _capture: any = nil
+
+local function fireLogRaw(category, text, unitId)
+	if type(text) ~= "string" or text == "" then return end
+	if _capture then
+		table.insert(_capture.lines, { category = category, text = text, unitId = unitId })
+		return
+	end
+	BattleEvents.BattleLogEntry:FireAllClients({ t = _logTurn, c = category, x = text, u = unitId })
+end
+
+--------------------------------------------------
+-- BATTLE LOG COVERAGE (project_rules 225, 2026-10-28)
+-- Cause labels + per-unit snapshot diff + batch grouping.
+--   * CAUSE: callers name the cause by passing a trailing `cause` string, or by
+--     scoping one with SetCause(label) ... ClearCause(prev). "__silent" = absorb the
+--     change without logging (aura reconcile, passive MP regen).
+--   * SNAPSHOT: _snap[unitId] = {hp, mp, alive, st = {[statusId]=true}} -- what the
+--     log last described. UnitStateChanged logs only the diff. Every function that
+--     already logs a change refreshes the matching snapshot fields (dedup).
+--   * GROUPING: diff/object/terrain lines are buffered; on flush, >= GROUP_MIN lines
+--     sharing cause+kind become one summary. Any direct log line flushes the buffer
+--     first, so chronological order is preserved. Flush points: FlushLog() from
+--     CommandService (end of command) and Main (end of CT-tick block), plus a
+--     task.defer fallback. Logging never touches game state (read-only on units).
+--------------------------------------------------
+
+local SILENT = "__silent"
+BattleVisualBroadcaster.SILENT = SILENT
+local GROUP_MIN = 3  -- agent default threshold (vetoable)
+
+local _scopedCause = nil   -- SetCause/ClearCause scope
+local _snap = {}           -- [unitId] = snapshot
+local _unitsById = {}      -- [unitId] = unit (registry for tile lookup)
+local _buffer = {}         -- pending entries {kind, cause, unitId, name, amount, statusName, label, text, category}
+local _deferScheduled = false
+
+local function statusName(id)
+	local def = GameConstants.STATUSES and GameConstants.STATUSES[id]
+	return (def and def.name) or tostring(id)
+end
+
+local function statusSet(unit)
+	local set = {}
+	if unit and unit.statusInstances then
+		for _, e in ipairs(StatusService.GetStatusSummary(unit)) do
+			if e.id then set[e.id] = true end
+		end
+	end
+	return set
+end
+
+local function seedUnit(unit)
+	if not unit or unit.id == nil then return end
+	_unitsById[unit.id] = unit
+	_snap[unit.id] = {
+		hp = unit.currentHp or 0,
+		mp = unit.currentMp or 0,
+		alive = unit.isAlive ~= false,
+		st = statusSet(unit),
+	}
+end
+
+local function rangeText(lo, hi)
+	if lo == hi then return tostring(lo) end
+	return `{lo}–{hi}`
+end
+
+-- Single-line text for one buffered entry.
+local function entryText(e)
+	if e.text then return e.text end
+	local c, n = e.cause, e.name
+	if e.kind == "hpLoss" then
+		return if c then `{c} hit {n} for {e.amount}.` else `{n} lost {e.amount} HP.`
+	elseif e.kind == "hpGain" then
+		return if c then `{c} healed {n} for {e.amount}.` else `{n} recovered {e.amount} HP.`
+	elseif e.kind == "ko" then
+		return if c then `{n} was defeated ({c}).` else `{n} was defeated.`
+	elseif e.kind == "revive" then
+		return if c then `{n} was revived ({c}).` else `{n} was revived.`
+	elseif e.kind == "statusAdd" then
+		return if c then `{n} is now {e.statusName} ({c}).` else `{n} is now {e.statusName}.`
+	elseif e.kind == "statusRem" then
+		return if c then `{n} is no longer {e.statusName} ({c}).` else `{n} is no longer {e.statusName}.`
+	elseif e.kind == "mpLoss" then
+		return `{c}: {n} lost {e.amount} MP.`
+	elseif e.kind == "mpGain" then
+		return `{c}: {n} gained {e.amount} MP.`
+	elseif e.kind == "tileEffect" then
+		return `{c} spread to a tile.`
+	elseif e.kind == "terrain" then
+		return `{c}: a tile became {e.label}.`
+	elseif e.kind == "objDestroyed" then
+		return `{e.label} was destroyed.`
+	elseif e.kind == "objExploded" then
+		return `{e.label} exploded.`
+	elseif e.kind == "objPushed" then
+		return `{e.label} was pushed.`
+	elseif e.kind == "objHit" then  -- F4 (2026-11-08, rule 225): an object took a hit and survived
+		return if c then `{c} hit {e.label}.` else `{e.label} was hit.`
+	end
+	return nil
+end
+
+-- Summary text for k >= GROUP_MIN entries sharing cause+kind (+status/label).
+local function groupText(list)
+	local e = list[1]
+	local c, k = e.cause, #list
+	local lo, hi = math.huge, -math.huge
+	for _, x in ipairs(list) do
+		local a = x.amount or 0
+		if a < lo then lo = a end
+		if a > hi then hi = a end
+	end
+	if e.kind == "hpLoss" then return `{c} hit {k} units for {rangeText(lo, hi)}.`
+	elseif e.kind == "hpGain" then return `{c} healed {k} units for {rangeText(lo, hi)}.`
+	elseif e.kind == "statusAdd" then
+		if e.statusName == "Wet" then return `{c} soaked {k} units.` end
+		return `{c}: {k} units are now {e.statusName}.`
+	elseif e.kind == "statusRem" then return `{c}: {k} units are no longer {e.statusName}.`
+	elseif e.kind == "mpLoss" then return `{c}: {k} units lost {rangeText(lo, hi)} MP.`
+	elseif e.kind == "mpGain" then return `{c}: {k} units gained {rangeText(lo, hi)} MP.`
+	elseif e.kind == "tileEffect" then return `{c} spread to {k} tiles.`
+	elseif e.kind == "terrain" then return `{c}: {k} tiles became {e.label}.`
+	elseif e.kind == "objDestroyed" then return `{k}× {e.label} were destroyed.`
+	elseif e.kind == "objExploded" then return `{k}× {e.label} exploded.`
+	elseif e.kind == "objPushed" then return `{k}× {e.label} were pushed.`
+	elseif e.kind == "objHit" then return `{c} hit {k}× {e.label}.`
+	end
+	return nil
+end
+
+local GROUPABLE = {
+	hpLoss = true, hpGain = true, statusAdd = true, statusRem = true, mpLoss = true, mpGain = true,
+	tileEffect = true, terrain = true, objDestroyed = true, objExploded = true, objPushed = true,
+	objHit = true,
+}
+
+local function flushLog()
+	_deferScheduled = false
+	if #_buffer == 0 then return end
+	local pending = _buffer
+	_buffer = {}
+	-- Bucket by cause+kind(+status/label); emit in order of first appearance.
+	local buckets, order = {}, {}
+	for i, e in ipairs(pending) do
+		local key
+		if e.cause and GROUPABLE[e.kind] then
+			key = `{e.cause}|{e.kind}|{e.statusName or ""}|{e.label or ""}`
+		else
+			key = `#{i}`
+		end
+		if not buckets[key] then
+			buckets[key] = {}
+			table.insert(order, key)
+		end
+		table.insert(buckets[key], e)
+	end
+	for _, key in ipairs(order) do
+		local list = buckets[key]
+		if #list >= GROUP_MIN then
+			fireLogRaw(list[1].category or "field", groupText(list), nil)
+		else
+			for _, e in ipairs(list) do
+				if e.trace then warn(`[BattleLog] uncaused {e.kind} for {e.name}\n{e.trace}`) end
+				fireLogRaw(e.category or "status", entryText(e), e.unitId)
+				-- R7: a diff KO line counts as this KO's line (no second one from a hit / push).
+				local _ks = if e.kind == "ko" and e.unitId ~= nil then _snap[e.unitId] else nil
+				if _ks and _ks.alive == false then _ks.koLogged = true end
+			end
+		end
+	end
+end
+
+local function bufferEntry(e)
+	table.insert(_buffer, e)
+	if not _deferScheduled then
+		_deferScheduled = true
+		task.defer(flushLog)  -- fallback so nothing is held forever
+	end
+end
+
+-- BUG-180/181 (batch 14b): lines that belong right AFTER a hit's own HP line when the hit is not held (a
+-- counter's capture, or no hold): the Bleed bonus (BleedBonus) and the Sleep-wake lines (SleepBroken).
+-- They wait on the unit's snapshot and are buffered here by the hit's caused diff (diffUnit) or, when a
+-- hit line logged the HP itself, by syncHp. Returns true when something was buffered.
+local function bufferAfterHitPending(unit, s): boolean
+	if not s then return false end
+	local any = false
+	if (s.pendingBleed or 0) > 0 then
+		bufferEntry({ kind = "hpLoss", cause = "Bleed", unitId = unit.id, name = unitName(unit),
+			amount = s.pendingBleed, category = "action" })
+		any = true
+	end
+	s.pendingBleed = nil
+	if s.pendingWake then
+		for _, t in ipairs(s.pendingWake) do
+			bufferEntry({ kind = "wake", text = t, unitId = unit.id, name = unitName(unit), category = "status" })
+			any = true
+		end
+		s.pendingWake = nil
+	end
+	return any
+end
+
+-- Remove not-yet-flushed diff entries for a unit that a following logging
+-- broadcast is about to describe itself (dedup when state sync came first).
+-- amount (optional): only retract HP entries of exactly this size, so a DIFFERENT
+-- earlier change (e.g. a recoil hit) is never swallowed.
+local function retract(unitId, kinds, statusId, amount)
+	if unitId == nil or #_buffer == 0 then return end
+	for i = #_buffer, 1, -1 do
+		local e = _buffer[i]
+		if e.unitId == unitId and kinds[e.kind] and (statusId == nil or e.statusId == statusId)
+			and (amount == nil or e.amount == nil or e.amount == amount) then
+			table.remove(_buffer, i)
+		end
+	end
+end
+
+local HP_KINDS = { hpLoss = true, hpGain = true, ko = true, revive = true }
+
+-- Causes whose MP change is a real effect (rules 225). Others: MP absorbed silently.
+-- Callers can force it per call with UnitStateChanged(unit, cause, true).
+local MP_CAUSES = {
+	["Mana Storm"] = true, ["Tainted Ground"] = true, ["Magic Spring"] = true,
+	["Campfire"] = true, ["Recharge"] = true, ["MP drain"] = true,
+}
+local _mpCauseOverride = false
+-- BUG-178 (batch 14): causes that only take HP (weather damage, WeatherService). A status change the same
+-- diff finds was made by something else earlier, so it is logged without this cause (it read
+-- "Hero is now Burn (Hail)."). HP / KO lines still name the cause.
+-- BUG-182 (batch 14b): the other HP-only weather causes (WeatherService Lightning, Earthquake, Meteor /
+-- Eruption) had the same problem ("Hero is now Burn (Meteor).").
+local HP_ONLY_CAUSES = {
+	["Hail"] = true, ["Hunger Virus"] = true, ["Mana Storm"] = true,
+	["Lightning"] = true, ["Earthquake"] = true, ["Meteor"] = true, ["Eruption"] = true,
+}
+function BattleVisualBroadcaster.RegisterMpCause(label)
+	if type(label) == "string" then MP_CAUSES[label] = true end
+end
+
+-- Causes whose own heal line REPLACES the skill's heal line (2026-11-08, Studio bug 1). Vitality Surge
+-- logs "Vitality Surge healed X for N." itself; the turn controller later reports the same caster HP
+-- gain as "X heals X with <skill>". HealingApplied skips that second line when it matches the heal
+-- this cause already logged (same unit, same amount, HP unchanged since). Same opt-in idea as MP_CAUSES.
+local HEAL_CAUSES = {
+	["Vitality Surge"] = true,
+}
+function BattleVisualBroadcaster.RegisterHealCause(label)
+	if type(label) == "string" then HEAL_CAUSES[label] = true end
+end
+
+-- A cause that arrives right after an uncaused sync of the same unit (e.g. code that
+-- calls UnitStateChanged(u) then ObjectDamage(..., "Spike Trap")) names the line that
+-- is already buffered instead of adding a second one.
+local function relabel(unitId, cause)
+	if unitId == nil or type(cause) ~= "string" or cause == SILENT then return end
+	for _, e in ipairs(_buffer) do
+		if e.unitId == unitId and e.cause == nil and HP_KINDS[e.kind] then
+			e.cause = cause
+			e.trace = nil
+		end
+	end
+end
+local STATUS_ADD_KIND = { statusAdd = true }
+local STATUS_REM_KIND = { statusRem = true }
+
+-- Refresh snapshot fields after a broadcast that logged them itself.
+local function syncHp(unit)
+	if not unit or unit.id == nil then return end
+	local s = _snap[unit.id]
+	if not s then seedUnit(unit) return end
+	retract(unit.id, HP_KINDS)
+	if s.hp ~= (unit.currentHp or 0) then s.loggedGain = nil end  -- HEAL_CAUSES record is out of date
+	s.hp = unit.currentHp or 0
+	s.alive = unit.isAlive ~= false
+	if s.alive then s.koLogged = nil end  -- R7: alive again, a later KO gets its own line
+	-- BUG-180/181 (batch 14b): a not-held hit's Bleed bonus / Sleep-wake lines go right after the line that
+	-- logged this HP (UnitActed's hit line), so they are not left for a later, unrelated diff.
+	if bufferAfterHitPending(unit, s) then flushLog() end
+end
+
+local function syncStatus(unit, statusId, present)
+	if not unit or unit.id == nil or statusId == nil then return end
+	local s = _snap[unit.id]
+	if not s then seedUnit(unit) return end
+	retract(unit.id, if present then STATUS_ADD_KIND else STATUS_REM_KIND, statusId)
+	s.st[statusId] = if present then true else nil
+end
+
+local function logEntry(category, text, unitId)
+	if type(text) ~= "string" or text == "" then return end
+	flushLog()  -- keep chronological order with buffered lines
+	fireLogRaw(category, text, unitId)
+end
+
+-- Rulings R7 (handoff 1, 2026-11-09, rule 256): ONE "is knocked out." line per KO. A push / collision KO
+-- is HELD here (queueKo) instead of logged at once: the hit line of the same attack / skill logs it right
+-- after itself (UnitActed -> logKo). FlushPendingKo() logs any KO that no hit line claimed (end of each
+-- broadcast batch, next turn start, battle end). s.koLogged = this KO already has its line (cleared
+-- when the unit is seen alive again).
+local _pendingKo = {}       -- [unitId] = unit, KO line held back
+local _pendingKoOrder = {}  -- unitIds in the order they went down
+-- Job 1 (2026-11-09, rule 256 / ruling 140, attempt 2): push / collision visuals HELD while a hit command
+-- resolves. BattleTurnController turns the hold on around Attack / Skill commits and channel releases.
+-- UnitPushed then keeps its client event + log line here instead of sending them, and they are sent right
+-- AFTER the hit that caused them (UnitActed), so the client never sees a push's HP drop / KO before that
+-- hit. Unclaimed ones go at the end of the batch (FlushHeldPushes). A Push command (no hit) is never held.
+-- tag = which AI action of the turn held it (nil = the commit running now).
+local _holdPushes = false
+local _heldPushes: { any } = {}  -- { targetId, payload, text, pusherId, tag }
+local _heldHitLines: { any } = {}  -- BUG-172/173/175 (batch 14): { anchorId, category, text, unitId, tag }
+local _heldReviveLines: { any } = {}  -- BUG-143: { unitId, text, tag } (declared here so ResetLogState can clear it, BUG-193)
+local function logKo(unit)
+	if not unit or unit.id == nil then return end
+	_pendingKo[unit.id] = nil
+	if not _snap[unit.id] then seedUnit(unit) end
+	local s = _snap[unit.id]
+	if s.koLogged then return end
+	s.koLogged = true
+	logEntry("ko", `{unitName(unit)} is knocked out.`, unit.id)
+end
+local function queueKo(unit)
+	if not unit or unit.id == nil or unit.isAlive ~= false then return end
+	local s = _snap[unit.id]
+	if (s and s.koLogged) or _pendingKo[unit.id] then return end
+	_pendingKo[unit.id] = unit
+	table.insert(_pendingKoOrder, unit.id)
+end
+local function flushPendingKo()
+	if #_pendingKoOrder == 0 then return end
+	local order = _pendingKoOrder
+	_pendingKoOrder = {}
+	for _, id in ipairs(order) do
+		local u = _pendingKo[id]
+		_pendingKo[id] = nil
+		if u and u.isAlive == false then logKo(u) end
+	end
+end
+-- BUG-194 (batch 15b, BUG-190 W2): the held KO lines of only the units in `ids` (in the order they went down);
+-- the rest stay held. Used when one AI action's held pushes are released, so a later action's push KO
+-- (queued at its commit, before any line went out) is not pulled ahead of that action's hit.
+local function flushPendingKoFor(ids: { [any]: boolean })
+	if #_pendingKoOrder == 0 then return end
+	local keep = {}
+	for _, id in ipairs(_pendingKoOrder) do
+		if ids[id] then
+			local u = _pendingKo[id]
+			_pendingKo[id] = nil
+			if u and u.isAlive == false then logKo(u) end
+		else
+			table.insert(keep, id)
+		end
+	end
+	_pendingKoOrder = keep
+end
+function BattleVisualBroadcaster.FlushPendingKo()
+	flushPendingKo()
+end
+-- BUG-214 (batch 18, Tester pass 7 W2 FAIL, player-path counterpart of BUG-194/202): a player Push command is
+-- never held, so its push line goes out at once and the KO of the unit it shoved / collided into is queued
+-- (queueKo) until the batch flush. The ally-KO reactions (Hemophage) run before that flush and were logged
+-- first: push -> Hemophage -> KO. CombatResolver.FlushAllyKoReactions calls this for each KO'd unit when no
+-- hit command is held: that unit's queued KO line goes out now, so the reaction lines come after it.
+-- Held (Attack / Skill / AI turn) = no-op; those reactions wait for the KO line through BeginHitReaction(afterKo).
+function BattleVisualBroadcaster.LogHeldKo(unit: any)
+	if _holdPushes or _capture then return end
+	if not unit or unit.id == nil or unit.isAlive ~= false then return end
+	if not _pendingKo[unit.id] then return end
+	flushPendingKoFor({ [unit.id] = true })
+end
+
+-- Captured at diff time, warned at flush time only if the line survived dedup.
+local function uncausedTrace()
+	return debug.traceback("", 3)
+end
+
+-- Diff one unit against its snapshot and buffer log lines for what changed.
+local function diffUnit(unit, cause)
+	if not unit or unit.id == nil then return end
+	local s = _snap[unit.id]
+	if not s then
+		seedUnit(unit)  -- first sight: seed, don't dump the whole state
+		return
+	end
+	_unitsById[unit.id] = unit
+	local silent = cause == SILENT
+	local c = if silent then nil else cause
+	local name = unitName(unit)
+	local hp = unit.currentHp or 0
+	local mp = unit.currentMp or 0
+	local alive = unit.isAlive ~= false
+	local st = statusSet(unit)
+
+	if not silent then
+		local dHp = hp - s.hp
+		if dHp < 0 then
+			bufferEntry({ kind = "hpLoss", cause = c, unitId = unit.id, name = name, amount = -dHp, category = "action",
+				trace = if c then nil else uncausedTrace() })
+			-- BUG-180/181 (batch 14b): this hit's Bleed bonus ("Bleed hit X for N.") and Sleep-wake lines, held on
+			-- the snapshot by BleedBonus / SleepBroken, go right after its HP-loss line (which includes the bonus).
+			bufferAfterHitPending(unit, s)
+		elseif dHp > 0 then
+			bufferEntry({ kind = "hpGain", cause = c, unitId = unit.id, name = name, amount = dHp, category = "action" })
+		end
+		if s.alive and not alive then
+			bufferEntry({ kind = "ko", cause = c, unitId = unit.id, name = name, category = "ko",
+				trace = if c then nil else uncausedTrace() })
+		elseif (not s.alive) and alive then
+			bufferEntry({ kind = "revive", cause = c, unitId = unit.id, name = name, category = "ko" })
+		end
+		local sc = if c ~= nil and HP_ONLY_CAUSES[c] then nil else c  -- BUG-178: HP-only cause never names a status change
+		for id in pairs(st) do
+			if not s.st[id] then
+				bufferEntry({ kind = "statusAdd", cause = sc, unitId = unit.id, name = name,
+					statusId = id, statusName = statusName(id), category = "status" })
+			end
+		end
+		for id in pairs(s.st) do
+			if not st[id] then
+				bufferEntry({ kind = "statusRem", cause = sc, unitId = unit.id, name = name,
+					statusId = id, statusName = statusName(id), category = "status" })
+			end
+		end
+		-- MP is only logged when an effect caused it (passive regen stays silent).
+		-- Passive regen mutates MP without any broadcast, so a later caused sync (e.g.
+		-- Hail) would otherwise report the regen too: MP lines are opt-in per cause.
+		local dMp = mp - s.mp
+		if c and dMp ~= 0 and (MP_CAUSES[c] or _mpCauseOverride) then
+			bufferEntry({ kind = if dMp < 0 then "mpLoss" else "mpGain", cause = c, unitId = unit.id,
+				name = name, amount = math.abs(dMp), category = "status" })
+		end
+		-- BUG-195 (batch 15b, BUG-181 W3): a not-held hit that broke Sleep but lost no HP for the log (e.g. a
+		-- shield absorbed it all) left its "(woken by damage)" lines waiting for the unit's next HP change, so
+		-- they came out later under an unrelated line. Any caused diff now sends what is still waiting, once
+		-- (a no-op after the HP-loss branch above already sent it).
+		if c ~= nil then bufferAfterHitPending(unit, s) end
+	end
+	-- HEAL_CAUSES (2026-11-08): remember a heal this cause just logged, so HealingApplied can skip
+	-- describing the same HP gain again. Any other HP change replaces / clears the record.
+	if hp ~= s.hp then
+		s.loggedGain = if c ~= nil and HEAL_CAUSES[c] and hp > s.hp then { amount = hp - s.hp, hp = hp } else nil
+	end
+	s.hp = hp
+	s.mp = mp
+	s.alive = alive
+	if alive then s.koLogged = nil end  -- R7: alive again, a later KO gets its own line
+	s.st = st
+end
+
+local function unitAtTile(x, y)
+	local fallback = nil
+	for id, u in pairs(_unitsById) do
+		if u.tileX == x and u.tileY == y then
+			local s = _snap[id]
+			if s and (s.hp ~= (u.currentHp or 0) or s.alive ~= (u.isAlive ~= false)) then
+				return u  -- the unit whose state just changed
+			end
+			if u.isAlive then fallback = fallback or u end
+		end
+	end
+	return fallback
+end
+
+-- Public hook for services that resolve events outside this module
+-- (Interact, counters, channel landing/interrupts, removals).
+function BattleVisualBroadcaster.Log(category, text, unitId)
+	logEntry(category, text, unitId)
+end
+
+-- Scoped cause label for code that broadcasts indirectly. Returns the previous
+-- label; pass it to ClearCause to restore (supports nesting).
+function BattleVisualBroadcaster.SetCause(label)
+	local prev = _scopedCause
+	_scopedCause = label
+	return prev
+end
+
+function BattleVisualBroadcaster.ClearCause(prev)
+	_scopedCause = prev
+end
+
+function BattleVisualBroadcaster.GetCause()
+	return _scopedCause
+end
+
+-- Flush buffered/grouped log lines now (end of command, end of CT-tick block).
+function BattleVisualBroadcaster.FlushLog()
+	flushLog()
+end
+
+-- True when the unit's current HP is what clients were last sent (every HP change so far already
+-- went out with its own cause, e.g. Blood Price's HP cost or a Lifesteal heal). 2026-11-09.
+function BattleVisualBroadcaster.IsHpShown(unit): boolean
+	if not unit or unit.id == nil then return false end
+	local s = _snap[unit.id]
+	return s ~= nil and s.hp == (unit.currentHp or 0)
+end
+
+-- Refresh a unit's log snapshot to its current state WITHOUT logging -- for code
+-- that logged the change itself via Log() (e.g. ObjectEffectService.TriggerTrap).
+function BattleVisualBroadcaster.SyncUnit(unit)
+	if not unit or unit.id == nil then return end
+	retract(unit.id, { hpLoss = true, hpGain = true, ko = true, revive = true, statusAdd = true, statusRem = true, mpLoss = true, mpGain = true })
+	seedUnit(unit)
+end
+
+-- Clear all log snapshots (battle end / reset).
+function BattleVisualBroadcaster.ResetLogState()
+	flushLog()
+	table.clear(_pendingKo)       -- R7: a held KO never carries into another battle
+	table.clear(_pendingKoOrder)
+	table.clear(_heldPushes)  -- Job 1: a held push never carries into another battle
+	table.clear(_heldHitLines)  -- BUG-172/173/175
+	table.clear(_heldReviveLines)  -- BUG-193 (BUG-143 W1): a held revive line never carries into another battle
+	_capture = nil
+	_holdPushes = false
+	table.clear(_snap)
+	table.clear(_unitsById)
+	_scopedCause = nil
+end
+
+--------------------------------------------------
+-- PACING
+--------------------------------------------------
+
+local PACE = {
+	BattleStart  = 2.5,
+	TurnStart    = 0.5,
+	Move         = 1.0,
+	Action       = 1.2,
+	Defeat       = 1.8,
+	TurnEnd      = 0.4,
+	BattleEnd    = 0.0,
+	Status       = 0.6,
+	Dot          = 0.8,
+	Healing      = 0.8,
+}
+
+-- BUG-143 (BUG-HUNT-15, 2026-11-22): a revive's log line written while a hit command is held (HoldPushes on)
+-- waits for that hit. AI hit lines go out at the END of the AI turn (player hits right after the commit),
+-- but a Rescue Beacon at the KO check revives the unit INSIDE the commit, so its line used to come first and
+-- the hit then read as a heal ("+39"). Held here, it is sent right after the hit's KO line (UnitActed), or
+-- with the action's held pushes / at the end of the batch when no hit claims it. Same text as before.
+-- (_heldReviveLines is declared with _heldPushes above, so ResetLogState can clear it -- BUG-193.)
+local function releaseHeldReviveLines(unitId: any, tag: any, anyTag: boolean)
+	if #_heldReviveLines == 0 then return end
+	local keep = {}
+	local send = {}
+	for _, h in ipairs(_heldReviveLines) do
+		if (unitId == nil or h.unitId == unitId) and (anyTag or h.tag == tag) then
+			table.insert(send, h)
+		else
+			table.insert(keep, h)
+		end
+	end
+	if #send == 0 then return end
+	_heldReviveLines = keep
+	for _, h in ipairs(send) do
+		logEntry("ko", h.text, h.unitId)
+	end
+end
+
+-- A revive's own line (category "ko", unchanged). Logged at once unless a hit command is held.
+function BattleVisualBroadcaster.LogRevive(unit, text)
+	if not unit or type(text) ~= "string" or text == "" then return end
+	if _holdPushes then
+		table.insert(_heldReviveLines, { unitId = unit.id, text = text, tag = nil })
+		return
+	end
+	logEntry("ko", text, unit.id)
+end
+
+-- BUG-172 / BUG-173 / BUG-175 (batch 14): log lines that belong right AFTER a hit line: a counter's lines
+-- (captured while it resolves inside the hit command), the Bleed bonus of that hit and a Sleep it broke.
+-- While a hit command is held (HoldPushes on) they wait here, anchored on the unit that was hit, and
+-- UnitActed sends them right after that unit's hit line (AI turns: same tag as the action's pushes).
+-- Unclaimed ones go with the action's held pushes / at the end of the batch. Not held = sent at once.
+-- (_heldHitLines is declared with _heldPushes above, so ResetLogState can clear it.)
+-- koPhase (BUG-190, batch 15): nil = every matching line; false = only lines that go right after the hit line;
+-- true = only lines held to go after the anchor's KO line (afterKo, e.g. Hemophage set off by that KO).
+local function releaseHeldHitLines(anchorId: any, tag: any, anyTag: boolean, koPhase: boolean?)
+	if #_heldHitLines == 0 then return end
+	local keep, send = {}, {}
+	for _, h in ipairs(_heldHitLines) do
+		if (anchorId == nil or h.anchorId == anchorId) and (anyTag or h.tag == tag)
+			and (koPhase == nil or (h.afterKo == true) == koPhase) then
+			table.insert(send, h)
+		else
+			table.insert(keep, h)
+		end
+	end
+	if #send == 0 then return end
+	_heldHitLines = keep
+	for _, h in ipairs(send) do
+		logEntry(h.category or "action", h.text, h.unitId)
+	end
+end
+
+-- Close the innermost capture: its buffered lines are captured first, then all of them are held for
+-- the hit on its anchor unit (or handed to an outer capture).
+local function endCapture()
+	local cap = _capture
+	if not cap then return end
+	flushLog()
+	_capture = cap.prev
+	for _, l in ipairs(cap.lines) do
+		if _capture then
+			table.insert(_capture.lines, l)
+		else
+			table.insert(_heldHitLines, { anchorId = cap.anchorId, category = l.category, text = l.text, unitId = l.unitId,
+				afterKo = cap.afterKo })  -- BUG-190
+		end
+	end
+end
+
+-- One line that belongs after the hit on anchorId: held while a hit command is held, else sent now.
+local function emitAfterHit(anchorId: any, category: string, text: string, unitId: any)
+	if _capture or not _holdPushes or anchorId == nil then
+		logEntry(category, text, unitId)
+	else
+		table.insert(_heldHitLines, { anchorId = anchorId, category = category, text = text, unitId = unitId })
+	end
+end
+
+-- BUG-172: a counter (CommandService.TriggerCounterIfEligible) resolving inside a held hit command. Its
+-- lines (counter hits, RT lines, KO) are captured and sent right after the hit line on `anchorUnit` (the
+-- counter-attacking defender). Returns a token for EndHitReaction; false = not held, lines go out at once.
+-- afterKo (optional, BUG-190 batch 15): the lines go after the anchor's KO line instead (a reaction to that
+-- KO, such as Hemophage), not right after its hit line.
+function BattleVisualBroadcaster.BeginHitReaction(anchorUnit: any, afterKo: boolean?): boolean
+	if not _holdPushes or not anchorUnit or anchorUnit.id == nil then return false end
+	flushLog()  -- lines from before the counter go out as before
+	_capture = { anchorId = anchorUnit.id, lines = {}, prev = _capture, afterKo = if afterKo then true else nil }
+	return true
+end
+
+function BattleVisualBroadcaster.EndHitReaction(started: boolean)
+	if started then endCapture() end
+end
+
+-- BUG-173: the Bleed bonus of one hit (CombatResolver.ApplyOutcome). Logs only the bonus
+-- ("Bleed hit <unit> for N."), after the hit line; the hit line keeps the HP the unit lost.
+-- Was a full HP diff under "Bleed" that came before the hit line and showed the whole hit.
+function BattleVisualBroadcaster.BleedBonus(unit: any, amount: number)
+	if not unit or unit.id == nil or (amount or 0) <= 0 then return end
+	local text = `Bleed hit {unitName(unit)} for {amount}.`
+	if _holdPushes and not _capture then
+		table.insert(_heldHitLines, { anchorId = unit.id, category = "action", text = text, unitId = unit.id })
+	else
+		-- BUG-180 (batch 14b): not held (a counter's capture, or no hold): do NOT log now and do NOT touch s.hp.
+		-- The bonus waits on the snapshot; the hit's own caused sync (diffUnit) logs the whole HP loss first,
+		-- then "Bleed hit <unit> for N." (syncHp sends it right after a hit line that logged the HP itself).
+		-- Was buffered at once, so it came BEFORE the counter hit line and the counter line left the bonus out.
+		local s = _snap[unit.id]
+		if s then
+			s.pendingBleed = (s.pendingBleed or 0) + amount
+		end
+	end
+	BattleVisualBroadcaster.StatusSync(unit)  -- client HP bar / pills, no log diff
+end
+
+-- BUG-175: damage broke Sleep (StatusService.OnDamageReceived, called from CombatResolver.ApplyOutcome).
+-- The removal and the Sleep Immunity it grants are logged at the time with the real cause, after the
+-- hit line, instead of turning up later under an unrelated cause ("is no longer Sleep (Dev).").
+function BattleVisualBroadcaster.SleepBroken(unit: any)
+	if not unit or unit.id == nil then return end
+	local s = _snap[unit.id]
+	if not s then seedUnit(unit) return end
+	local now = statusSet(unit)
+	local name = unitName(unit)
+	-- BUG-181 (batch 14b): held hit -> held for the hit line (as before). Not held (a counter's capture, or no
+	-- hold) -> wait on the snapshot until the hit's own HP line (diffUnit / syncHp), so inside a counter they
+	-- come after "<defender>'s Counter hit ..." instead of before it.
+	local function wakeLine(text: string)
+		if _holdPushes and not _capture then
+			emitAfterHit(unit.id, "status", text, unit.id)
+		else
+			s.pendingWake = s.pendingWake or {}
+			table.insert(s.pendingWake, text)
+		end
+	end
+	if s.st["Sleep"] and not now["Sleep"] then
+		retract(unit.id, STATUS_REM_KIND, "Sleep")
+		s.st["Sleep"] = nil
+		wakeLine(`{name} is no longer {statusName("Sleep")} (woken by damage).`)
+	end
+	if now["Sleep Immunity"] and not s.st["Sleep Immunity"] then
+		retract(unit.id, STATUS_ADD_KIND, "Sleep Immunity")
+		s.st["Sleep Immunity"] = true
+		wakeLine(`{name} is now {statusName("Sleep Immunity")} (woken by damage).`)
+	end
+	BattleVisualBroadcaster.StatusSync(unit)
+end
+
+-- Job 1 (2026-11-09): send held push visuals (client event, then its log line, then the push pause).
+-- targetId nil = any unit; anyTag = ignore the tag.
+local function releaseHeldPushes(targetId: any, tag: any, anyTag: boolean)
+	if #_heldPushes == 0 then return end
+	local send = {}
+	local keep = {}
+	for _, h in ipairs(_heldPushes) do
+		if (targetId == nil or h.targetId == targetId) and (anyTag or h.tag == tag) then
+			table.insert(send, h)
+		else
+			table.insert(keep, h)
+		end
+	end
+	if #send == 0 then return end
+	_heldPushes = keep
+	for _, h in ipairs(send) do
+		BattleEvents.UnitPushed:FireAllClients(h.payload)
+		logEntry("action", h.text, h.pusherId)
+		-- BUG-207 (batch 17, BUG-204 recurrence): the status lines of the tile / terrain this push put the unit on
+		-- ("is now Poison (Poison Cloud tile).", "is now Drowning (Deep Water).") go right after its push line.
+		if h.afterLines then
+			for _, l in ipairs(h.afterLines) do logEntry("status", l.text, l.unitId) end
+		end
+		task.wait(PACE.Action)
+	end
+	return send  -- BUG-194 (batch 15b): ReleaseHeldPushes logs the held KOs of just these pushes next
+end
+
+function BattleVisualBroadcaster.HoldPushes(on: boolean)
+	while _capture do endCapture() end  -- BUG-172 safety: a capture never outlives its hit command
+	_holdPushes = on == true
+end
+
+-- Stamp the pushes held by the commit that just ran with a new tag (an AI turn batches several commits).
+local _pushTagSeq = 0
+function BattleVisualBroadcaster.TagHeldPushes(): number
+	_pushTagSeq += 1
+	for _, h in ipairs(_heldPushes) do
+		if h.tag == nil then h.tag = _pushTagSeq end
+	end
+	for _, h in ipairs(_heldReviveLines) do  -- BUG-143: held revive lines share the action's tag
+		if h.tag == nil then h.tag = _pushTagSeq end
+	end
+	for _, h in ipairs(_heldHitLines) do  -- BUG-172/173/175: so do the lines held for its hits
+		if h.tag == nil then h.tag = _pushTagSeq end
+	end
+	return _pushTagSeq
+end
+
+-- BUG-143 recurrence (batch 15): revive lines held by a check that ran AFTER an AI action's commit (the
+-- mid-turn battle-end check runs the Rescue Beacon hook) get that action's tag, so the hit line that knocked
+-- the unit out sends its KO line and then the revive line (UnitActed). nil tag = left for the next tag / flush.
+function BattleVisualBroadcaster.TagHeldRevives(tag: any)
+	if tag == nil then return end
+	for _, h in ipairs(_heldReviveLines) do
+		if h.tag == nil then h.tag = tag end
+	end
+end
+
+function BattleVisualBroadcaster.ReleaseHeldPushes(targetId: any, tag: any)
+	-- BUG-194 (batch 15b, BUG-190 W2): a push / collision KO of this action comes before the reactions to it.
+	-- Was: every held hit line (Hemophage set off by the KO too), then the pushes, and the push's KO line only
+	-- later from flushPendingKo, so "X loses N HP (Hemophage)" came before the push and its KO line.
+	-- Order now: lines that go right after the hit, the pushes, the KOs of the units just pushed / collided,
+	-- the reactions to those KOs (afterKo), then the revive lines.
+	releaseHeldHitLines(targetId, tag, false, false)  -- BUG-172/173/175: lines no hit line of this action claimed
+	local _sent = releaseHeldPushes(targetId, tag, false)
+	if _sent then
+		local _ids = {}
+		for _, h in ipairs(_sent) do
+			if h.targetId ~= nil then _ids[h.targetId] = true end
+			local _cid = h.payload and h.payload.collidedId
+			if _cid ~= nil then _ids[_cid] = true end
+		end
+		flushPendingKoFor(_ids)
+	end
+	releaseHeldHitLines(targetId, tag, false, true)  -- BUG-190: reactions to a KO (e.g. Hemophage), after the KO line
+	releaseHeldReviveLines(targetId, tag, false)  -- BUG-143
+end
+
+-- Everything still held, in order; also ends the hold.
+function BattleVisualBroadcaster.FlushHeldPushes()
+	while _capture do endCapture() end  -- BUG-172 safety
+	_holdPushes = false
+	-- BUG-194 (batch 15b, BUG-190 W2): same order as ReleaseHeldPushes. End of batch, so every held KO goes here
+	-- (each caller already flushes the held KOs right after this).
+	releaseHeldHitLines(nil, nil, true, false)  -- BUG-172/173/175: before the pushes, as UnitActed sends them
+	releaseHeldPushes(nil, nil, true)
+	flushPendingKo()  -- BUG-194: the push / collision KO lines, before the reactions to them
+	releaseHeldHitLines(nil, nil, true, true)  -- BUG-190: reactions to a KO (e.g. Hemophage), after the KO line
+	releaseHeldReviveLines(nil, nil, true)  -- BUG-143: after the pushes, so a push KO comes before its revive
+end
+
+--------------------------------------------------
+-- HELPERS
+--------------------------------------------------
+
+-- Info-panel stat values (2026-10-28): a COPY of derivedStats with CURRENT values from the same
+-- calculation the battle uses (gear / race / trait / doctrine + active buffs and debuffs).
+-- unit.derivedStats is never changed. Deferred require keeps this module free of load-order ties.
+local function displayDerived(unit)
+	if not unit.derivedStats then return nil end
+	local ok, svc = pcall(require, script.Parent.StatCalcService)
+	if ok and svc and svc.BuildDisplay then
+		return svc.BuildDisplay(unit, "current")
+	end
+	return unit.derivedStats
+end
+
+local function serializeUnit(unit)
+	local result = {
+		id          = unit.id,
+		name        = unit.name,
+		side        = unit.side,
+		enemyType   = unit.enemyType,  -- Grunt/Veteran/Elite; client shows tier star on the name
+		-- Portrait asset ID (numeric) for the unit's face image. Assigned by
+		-- EnemyGenerator to enemy/neutral/NPC units only; nil for player units
+		-- and summons (client falls back to the colored name box when nil).
+		portraitAssetId = unit.portraitAssetId,
+		tileX       = unit.tileX,
+		tileY       = unit.tileY,
+		-- FACING FIX (2026-10-21): the BattleStarted packet never carried facing, so the
+		-- client fell back to `unit.facing or "S"` and every unit faced plain south at
+		-- battle start (enemies visibly turned AWAY from center). The server computes the
+		-- correct center-facing (INITIAL FACING block in Main) and stores it on the unit;
+		-- carry it through so the client's orientUnitToFacing uses the real value. Tokens
+		-- are abbreviations (N/NE/E/.../NW) matching GameConstants.FACING_VECTORS keys.
+		facing      = unit.facing,
+		currentHp   = unit.currentHp,
+		maxHp       = unit.maxHp,
+		currentMp   = unit.currentMp or 0,
+		maxMp       = unit.maxMp or 0,
+		isAlive     = unit.isAlive,
+		stats = unit.effectiveStats and {
+			STR = unit.effectiveStats.STR,
+			AGI = unit.effectiveStats.AGI,
+			INT = unit.effectiveStats.INT,
+			VIT = unit.effectiveStats.VIT,
+			DEX = unit.effectiveStats.DEX,
+			LUK = unit.effectiveStats.LUK,
+		} or nil,
+		currentAp   = unit.currentAp,
+		remainingRt = unit.remainingRt,
+		skillIds    = unit.skillIds or {},
+		statuses    = StatusService.GetStatusSummary(unit),
+		derivedStats = displayDerived(unit),
+		primaryStats = unit.primaryStats or nil,
+		level        = unit.level or 1,
+		-- Compact weapon summary for battle UI display
+		weaponName     = nil,
+		weaponArchetype = nil,
+		weaponDamage   = unit.weaponDamage or 0,
+		weaponWt       = unit.weaponWt or 0,
+		weaponRtDelay  = unit.weaponRtDelay or 0,
+		weaponPattern  = unit.weaponPattern or "Single",
+		weaponRange    = unit.weaponMaxRange or 1,
+		-- Doctrine (display name)
+		doctrine       = unit.doctrineId and DoctrineData[unit.doctrineId]
+			and DoctrineData[unit.doctrineId].name or nil,
+		-- Race (display name)
+		race           = unit.raceId and RaceData.GetRace(unit.raceId)
+			and RaceData.GetRace(unit.raceId).name or nil,
+	}
+
+	-- Get weapon name from equipment slots if available
+	if unit.equipmentSlots then
+		local mainHand = unit.equipmentSlots.MainHand
+		if mainHand then
+			result.weaponName = mainHand.name or nil
+			result.weaponArchetype = mainHand.archetype or nil
+		end
+	end
+
+	return result
+end
+
+-- SHARED SERIALIZER (2026-10-22): the single source of truth for a unit's client
+-- packet. Deployment packaging (Main.serializeForDeployment) now calls THIS same
+-- function, so deployment and battle describe every unit identically -- a field can
+-- never again be present in one phase's packet and missing from the other (the root
+-- cause behind the facing / HP-MP / stats "works in battle, blank in deployment"
+-- class of bug). Callers that need a phase-specific tweak (e.g. deployment's weapon
+-- label) adjust the returned table themselves; the field SET is always the same.
+function BattleVisualBroadcaster.SerializeUnit(unit)
+	return serializeUnit(unit)
+end
+
+local function serializeSkill(skillDef)
+	return {
+		id          = skillDef.id,
+		name        = skillDef.name,
+		range       = skillDef.range or 1,
+		mpCost      = skillDef.mpCost or 0,
+		rtCost      = skillDef.rtCost or 0,
+		channelTime = skillDef.channelTime or 0,
+		targetRules = skillDef.targetRules or "Enemy Unit",
+		pattern     = skillDef.pattern or "Single",
+		isHealing   = skillDef.isHealing or false,
+		tags        = skillDef.tags or {},
+	}
+end
+
+--------------------------------------------------
+-- PUBLIC API
+--------------------------------------------------
+
+function BattleVisualBroadcaster.BattleStarted(units)
+	_logTurn = 0
+	BattleVisualBroadcaster.ResetLogState()
+	logEntry("info", "Battle begins.")
+	local serialized = {}
+	for _, unit in ipairs(units) do
+		table.insert(serialized, serializeUnit(unit))
+		seedUnit(unit)  -- Battle Log Coverage: first UnitStateChanged must not dump state
+	end
+
+	-- 2026-11-18 6:10 PM: units a battlefield event placed BEFORE the battle starts join the
+	-- client's opening camera focus (after the quest-goal shots), grouped by their event name.
+	local eventUnits = {}
+	for _, unit in ipairs(units) do
+		if unit.isAlive and type(unit.eventName) == "string" and unit.eventName ~= "" then
+			table.insert(eventUnits, { id = unit.id, eventName = unit.eventName })
+		end
+	end
+	BattleEvents.BattleStarted:FireAllClients({
+		units = serialized,
+		eventUnits = eventUnits,
+		elevationMap = GameConstants.ELEVATION_MAP,
+		terrainMap   = GameConstants.TERRAIN_MAP,
+		blockers     = GameConstants.BLOCKERS,
+	})
+	task.wait(PACE.BattleStart)
+end
+
+-- Turn-bar time for a unit (user ruling 2026-10-27). Item devices take no turns: the bar shows
+-- them at their next timed activation (PulseScheduler stamps deviceNextIn). nil = leave the unit
+-- out of the bar (a device with nothing left to fire).
+function BattleVisualBroadcaster.TimelineRtFor(u)
+	if u.isItemDevice then return u.deviceNextIn end
+	return u.remainingRt
+end
+
+function BattleVisualBroadcaster.TurnStarted(unit, ct, allUnits)
+	-- Job 1: a held push is never carried into the next turn (should not happen: each batch sends its own).
+	if #_heldPushes > 0 then
+		warn(`[BattleVisualBroadcaster] {#_heldPushes} held push visual(s) were not sent by their batch; sending now.`)
+	end
+	BattleVisualBroadcaster.FlushHeldPushes()
+	flushPendingKo()  -- R7 fallback: a held KO no hit line claimed goes before the next turn header
+	-- BUG-HUNT-07 diagnostic (2026-11-22, no gameplay effect): a unit whose live HP differs from what
+	-- clients were last sent changed HP WITHOUT any broadcast since the last one. With the flag on, this
+	-- names the turn window it happened in (the turret's 39 HP loss was only noticed later by
+	-- applyPureBuff's diff). Default false.
+	if DEBUG_SILENT_HP and allUnits then
+		for _, u in ipairs(allUnits) do
+			local s = if u and u.id ~= nil then _snap[u.id] else nil
+			if s and s.hp ~= (u.currentHp or 0) then
+				warn(string.format("[BattleVisualBroadcaster] DEBUG silent HP change before turn %d (CT %s): %s shown %d, live %d/%d",
+					_logTurn + 1, tostring(ct), tostring(u.name), s.hp, u.currentHp or 0, u.maxHp or 0))
+			end
+		end
+	end
+	_logTurn += 1
+	logEntry("turn", `{unitName(unit)}  ·  turn {_logTurn}  ·  CT {ct or 0}`, unit.id)
+	-- Build a compact snapshot of all units' RT for client timeline simulation
+	local allUnitsRt = {}
+	if allUnits then
+		for _, u in ipairs(allUnits) do
+			local _rt = u.isAlive and BattleVisualBroadcaster.TimelineRtFor(u) or nil
+			if _rt then
+				table.insert(allUnitsRt, {
+					id          = u.id,
+					name        = u.name,
+					side        = u.side,
+					remainingRt = _rt,
+					isChanneling = u.isChanneling or false,
+					cycleRt     = u.isItemDevice and u.deviceCycleCt or nil,     -- device: CT between activations
+					cyclesLeft  = u.isItemDevice and u.devicePulsesLeft or nil,  -- device: activations left
+				})
+			end
+		end
+	end
+	BattleEvents.TurnStarted:FireAllClients({
+		unitId   = unit.id,
+		ct       = ct,
+		statuses = StatusService.GetStatusSummary(unit),
+		currentMp = unit.currentMp or 0,
+		maxMp     = unit.maxMp or 0,
+		-- BUG-131 (2026-11-22): real AP for the enemy-turn panel (a boss showed "3/2 AP").
+		currentAp = unit.currentAp,
+		maxAp     = GameConstants.GetTurnAp(unit),
+		allUnitsRt = allUnitsRt,
+	})
+	task.wait(PACE.TurnStart)
+end
+
+function BattleVisualBroadcaster.UnitMoved(unit)
+	-- Job 1: a held push of this unit is shown before its next move, so the token never jumps back.
+	if #_heldPushes > 0 then releaseHeldPushes(unit.id, nil, true) end
+	BattleEvents.UnitMoved:FireAllClients({
+		unitId = unit.id,
+		tileX  = unit.tileX,
+		tileY  = unit.tileY,
+	})
+	task.wait(PACE.Move)
+end
+
+-- animKind (optional, 2026-10-28): AnimationRegistry kind the actor plays (nil = client
+-- fallback, "None" = nothing). The server only names it; the client animates (NET-001).
+function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, skillId, animKind)
+	-- BUG-143 (BUG-HUNT-15): revivedHere = this hit knocked the target out and it was revived inside the same
+	-- command (Rescue Beacon at the KO check). The log line shows the KO (targetHpAfter 0); the client keeps
+	-- the live HP it was already sent with the revive, so the revived token is never greyed out again.
+	-- BUG-143 recurrence (batch 15): koHere == true but the target is alive now = this hit knocked it out and it
+	-- was revived AFTER the commit, before this line went out (AI turn: the mid-turn battle-end check runs the
+	-- Rescue Beacon hook). Same handling: KO line, then the held revive line; the client keeps the live HP.
+	local _revivedHere = outcome.revivedHere == true or (outcome.koHere == true and target.isAlive == true)
+	BattleEvents.UnitActed:FireAllClients({
+		actorId     = actor.id,
+		actionType  = skillName and "Skill" or "Attack",
+		targetId    = target.id,
+		damage      = outcome.finalDamage,
+		skillName   = skillName,
+		skillId     = skillId,  -- client VFX registry lookup (element/tags)
+		animKind    = animKind,
+		-- Rulings R9 (handoff 1, 2026-11-09): this hit's own HP when the caller recorded it (AI turns are
+		-- sent after the whole turn), so the bar steps down hit by hit; otherwise the live HP, as before.
+		targetHp    = if outcome.targetHpAfter ~= nil and not _revivedHere then outcome.targetHpAfter else target.currentHp,
+		targetMaxHp = target.maxHp,
+		statusApplied = outcome.statusApplied or nil,
+		rtDelay     = outcome.rtDelay or nil,
+	})
+	do
+		local head = if skillName
+			then `{unitName(actor)} uses {skillName} on {unitName(target)}`
+			else `{unitName(actor)} attacks {unitName(target)}`
+		-- Item 10 (2026-11-08 11:52 PM): HP after THIS hit when the caller recorded it (AI turns are logged
+		-- after the whole turn); otherwise the live HP, as before.
+		local hpShown = if outcome.targetHpAfter ~= nil then outcome.targetHpAfter else target.currentHp
+		local _dmgShown = outcome.finalDamage or 0
+		local parts = {}
+		local extras = {}
+		if outcome.statusApplied and outcome.statusApplied ~= "" then
+			table.insert(extras, `+{outcome.statusApplied}`)
+		end
+		if outcome.rtDelay and outcome.rtDelay > 0 then
+			table.insert(extras, `target RT +{outcome.rtDelay}`)
+		end
+		-- BUG-191 (batch 15): no "-0 HP" when the line lost no HP and the HP part says nothing: a self-buff or a
+		-- buff on an ally ("uses Mana Surge on Knockabout Deepspell: -0 HP"), or a line that names a status / RT
+		-- change instead. A 0-damage hit on an enemy with nothing else to say still shows "-0 HP" (it landed
+		-- for nothing, e.g. fully absorbed or immune).
+		local _hideHp = _dmgShown == 0 and not _revivedHere
+			and (target == actor or (target.side ~= nil and target.side == actor.side) or #extras > 0)
+		if not _hideHp then
+			table.insert(parts, `-{_dmgShown} HP ({hpShown or 0}/{target.maxHp or 0})`)
+		end
+		for _, e in ipairs(extras) do table.insert(parts, e) end
+		logEntry("action", if #parts > 0 then `{head}: {table.concat(parts, ", ")}` else `{head}.`, actor.id)
+		syncHp(target)
+		if outcome.statusApplied and outcome.statusApplied ~= "" then syncStatus(target, outcome.statusApplied, true) end
+		-- BUG-178 (batch 14): other statuses THIS actor put on the target that the hit line does not name
+		-- get their line now, with this hit as the cause. They stayed unlogged and the next caused diff of
+		-- the unit named its own cause ("Timesovereign Bloodrage is now Venom (Hail).").
+		-- BUG-187 (batch 15): self-casts too. A first Counter Stance with Recharge Support left Recharge unlogged on
+		-- the caster, so the later Recharge MP tick named it ("is now CounterStance (Recharge)." / Recharge).
+		local _ts = if target.id ~= nil then _snap[target.id] else nil
+		if _ts and target.statusInstances then
+			local _now = statusSet(target)
+			local _cause = skillName or `{unitName(actor)}'s attack`
+			for _, inst in ipairs(target.statusInstances) do
+				local sid = inst.id
+				if sid ~= nil and _now[sid] and not _ts.st[sid] and actor.id ~= nil and inst.sourceUnitId == actor.id then
+					_ts.st[sid] = true
+					logEntry("status", `{unitName(target)} is now {statusName(sid)} ({_cause}).`, target.id)
+				end
+			end
+		end
+		-- BUG-203 (Tester batch 16 W2): a held "is now X (cause)." line for the status this hit line already shows as
+		-- "+X" (same unit, same action) is dropped, so one application is logged once.
+		if outcome.statusApplied and outcome.statusApplied ~= "" and #_heldHitLines > 0 then
+			local _keepH = {}
+			for _, h in ipairs(_heldHitLines) do
+				if not (h.anchorId == target.id and h.statusId == outcome.statusApplied and h.tag == outcome.pushTag) then
+					table.insert(_keepH, h)
+				end
+			end
+			_heldHitLines = _keepH
+		end
+		-- BUG-172/173/175: this hit's Bleed bonus, a Sleep it broke, the counter it provoked.
+		-- BUG-190 (batch 15): not the lines held for after this unit's KO line (Hemophage); they go below.
+		releaseHeldHitLines(target.id, outcome.pushTag, false, false)
+	end
+	task.wait(PACE.Action)
+	-- Job 1 (2026-11-09): this hit's held knockback / collision now -- after the hit, before the KO below.
+	local _sentHere = releaseHeldPushes(target.id, outcome.pushTag, false)
+
+	-- Rulings R9 (handoff 1, 2026-11-09): the defeated event AND the KO line go only with the hit that
+	-- knocked the unit out (koHere == false: an earlier, non-lethal hit of this AI turn), so the client
+	-- never shows the unit down before its last hit. R7: logKo writes one line per KO, after this hit line
+	-- (a push / collision KO of this target was held back for it).
+	if not target.isAlive and outcome.koHere ~= false then
+		BattleEvents.UnitDefeated:FireAllClients({ unitId = target.id })
+		logKo(target)
+		task.wait(PACE.Defeat)
+	elseif _revivedHere then
+		-- BUG-143: KO line first, then this unit's revive line that was held for this hit. No UnitDefeated
+		-- event: the client already shows the unit revived (same commit).
+		logKo(target)
+		releaseHeldHitLines(target.id, outcome.pushTag, false, true)  -- BUG-190: reactions to this KO, before the revive
+		releaseHeldReviveLines(target.id, outcome.pushTag, false)
+		local _rs = _snap[target.id]; if _rs then _rs.koLogged = nil end  -- BUG-149 (W1): revived, a later KO gets its own line
+	end
+	-- BUG-202 (Tester batch 15b/16 W1, BUG-194): the KO of a unit this hit's own knockback shoved / collided into
+	-- goes right after the push line, then the reactions to that KO (afterKo, e.g. Hemophage). Was: no flush here,
+	-- so the action release found no push left and the KO line waited until the end of the AI turn. Only the KOs
+	-- each sent push queued itself (koIds), so a later action's push KO of the same unit is not pulled ahead.
+	if _sentHere then
+		local _ids, _any = {}, false
+		for _, h in ipairs(_sentHere) do
+			if h.koIds then
+				for cid in pairs(h.koIds) do
+					if cid ~= target.id then _ids[cid] = true; _any = true end
+				end
+			end
+		end
+		if _any then
+			flushPendingKoFor(_ids)
+			for cid in pairs(_ids) do releaseHeldHitLines(cid, outcome.pushTag, false, true) end
+		end
+	end
+	-- BUG-190 (batch 15): lines held for after this unit's KO line (Hemophage set off by the KO). Sent after the
+	-- KO line above; when this hit logged no KO they are left for the action's release / batch flush.
+	if outcome.koHere ~= false and (not target.isAlive or _revivedHere) then
+		releaseHeldHitLines(target.id, outcome.pushTag, false, true)
+	end
+end
+
+-- Slice 3: broadcast DoT damage
+-- sourceName (optional, 2026-10-27): a device that dealt the hit (e.g. "Sentry Turret"); the
+-- battle log then names it instead of reading like a status tick.
+function BattleVisualBroadcaster.DotDamage(unit, statusId, damage, sourceName)
+	BattleEvents.DotDamage:FireAllClients({
+		unitId    = unit.id,
+		statusId  = statusId,
+		damage    = damage,
+		currentHp = unit.currentHp,
+		maxHp     = unit.maxHp,
+	})
+	if sourceName then
+		logEntry("action", `{sourceName} hits {unitName(unit)}: -{damage or 0} HP ({unit.currentHp or 0}/{unit.maxHp or 0})`, unit.id)
+	else
+		logEntry("status", `{unitName(unit)} takes {damage or 0} {statusId} damage ({unit.currentHp or 0}/{unit.maxHp or 0})`, unit.id)
+	end
+	syncHp(unit)
+	task.wait(PACE.Dot)
+
+	if not unit.isAlive then
+		BattleEvents.UnitDefeated:FireAllClients({ unitId = unit.id })
+		logKo(unit)  -- R7: one KO line per KO
+		task.wait(PACE.Defeat)
+	end
+end
+
+-- Slice 3: broadcast healing
+-- animKind (optional, 2026-10-28): caster animation kind, same contract as UnitActed.
+function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName, skillId, animKind)
+	BattleEvents.HealingApplied:FireAllClients({
+		actorId     = actor.id,
+		targetId    = target.id,
+		amount      = amount,
+		targetHp    = target.currentHp,
+		targetMaxHp = target.maxHp,
+		statuses    = if target.statusInstances then StatusService.GetStatusSummary(target) else nil,  -- Venom weaken/cure (2026-10-26)
+		skillName   = skillName,
+		skillId     = skillId,  -- client VFX registry lookup
+		animKind    = animKind,
+	})
+	-- HEAL_CAUSES (2026-11-08): a self-heal already logged under its own cause (e.g. "Vitality Surge
+	-- healed Mage for 5.") is not logged again as "Mage heals Mage with <skill>" (one event = one line,
+	-- rules 225). The heal number / HP bar event above still fires.
+	local _ts = if actor and target and actor.id ~= nil and actor.id == target.id then _snap[target.id] else nil
+	local _lg = _ts and _ts.loggedGain
+	if _lg and _lg.amount == amount and _lg.hp == (target.currentHp or 0) then
+		_ts.loggedGain = nil
+		flushLog()  -- the cause's own line goes out now, in order
+	else
+		logEntry("action", `{unitName(actor)} heals {unitName(target)}{if skillName then ` with {skillName}` else ""}: +{amount or 0} HP ({target.currentHp or 0}/{target.maxHp or 0})`, actor.id)
+	end
+	syncHp(target)
+	if target and target.statusInstances and target.id ~= nil and _snap[target.id] then _snap[target.id].st = statusSet(target) end
+	task.wait(PACE.Healing)
+end
+
+-- Slice 4A: broadcast channel fizzle (target died, MP insufficient, etc.)
+-- Channel loop start: client plays a looping Charging VFX on the caster
+-- (Charging 1 for damage skills, Charging 2 for healing) until ChannelEnded
+-- (executed) or ChannelFizzled (interrupted).
+-- animKind (optional, 2026-10-28): caster animation at channel start (double-cast for a
+-- channeled skill, quick cast for an activation-delayed one, Interact for Resuscitate).
+function BattleVisualBroadcaster.ChannelStarted(unit, isHealing, animKind)
+	if not unit then return end
+	BattleEvents.ChannelStarted:FireAllClients({ unitId = unit.id, isHealing = isHealing == true, animKind = animKind })
+end
+
+-- Channel loop stop on successful execution (interruption is signalled by
+-- ChannelFizzled, which the client also treats as a stop).
+function BattleVisualBroadcaster.ChannelEnded(unit)
+	if not unit then return end
+	BattleEvents.ChannelEnded:FireAllClients({ unitId = unit.id })
+end
+
+-- Attacker-side multi-target (Cleave) flourish: the client plays Multi-Slash ON
+-- THE ATTACKER once when a single action strikes 2+ targets. Each struck target
+-- still plays its own Hit effect via the per-target UnitActed events.
+function BattleVisualBroadcaster.MultiTargetHit(unit)
+	if not unit then return end
+	BattleEvents.MultiTargetHit:FireAllClients({ unitId = unit.id })
+end
+
+function BattleVisualBroadcaster.ChannelFizzled(actor, skillName, reason)
+	BattleEvents.ChannelFizzled:FireAllClients({
+		actorId   = actor.id,
+		skillName = skillName,
+		reason    = reason or "fizzled",
+		tileX     = actor.tileX,
+		tileY     = actor.tileY,
+	})
+	logEntry("channel", `{unitName(actor)}'s {skillName or "skill"} fails ({reason or "fizzled"}).`, actor.id)
+	task.wait(PACE.Action)
+end
+
+-- Slice 3: send skill card data to a specific player
+function BattleVisualBroadcaster.SendSkillCards(player, unit, skills)
+	local serializedSkills = {}
+	for _, skillDef in ipairs(skills) do
+		table.insert(serializedSkills, serializeSkill(skillDef))
+	end
+	BattleEvents.SkillCardData:FireClient(player, {
+		unitId = unit.id,
+		skills = serializedSkills,
+		currentMp = unit.currentMp or 0,
+		maxMp     = unit.maxMp or 0,
+	})
+end
+
+-- Slice 3: send target highlight tiles to a specific player
+function BattleVisualBroadcaster.SendTargetHighlight(player, tiles, mode)
+	BattleEvents.TargetHighlight:FireClient(player, {
+		tiles = tiles,
+		mode  = mode or "enemy", -- "enemy" or "ally"
+	})
+end
+
+-- Status broadcasts
+-- causeLabel (optional, BUG-197 batch 16): the skill that gave the status as a rider (a Support augment). While
+-- that skill's hit command is held, the line is "<unit> is now <status> (<skill>)." and waits for the skill's
+-- own line (UnitActed), instead of an uncaused "gains" line that came before the cast line.
+function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, sourceIcon, sourceDesc, sourceDuration, causeLabel)
+	-- Damage prediction so the client can show it immediately. Pulled from the ONE shared
+	-- StatusService.GetStatusSummary (the same data TurnStarted/TurnEnded send) instead of a
+	-- local copy of the math that only covered Poison/Burn -- so every damaging debuff gets
+	-- its number the moment it is applied, and all phases agree. (2026-10-26)
+	local nextDamage, storedBurn, stacks = nil, nil, nil
+	local def = GameConstants.STATUSES[statusId]  -- still used by the battle-log line below
+	for _, entry in ipairs(StatusService.GetStatusSummary(unit)) do
+		if entry.id == statusId then
+			nextDamage = entry.nextDamage
+			storedBurn = entry.storedBurn
+			stacks = entry.stacks
+			break
+		end
+	end
+	BattleEvents.StatusApplied:FireAllClients({
+		unitId         = unit.id,
+		statusId       = statusId,
+		remainingTurns = remainingTurns,
+		nextDamage     = nextDamage,
+		storedBurn     = storedBurn,
+		stacks         = stacks,
+		-- Fallback icon for statuses with no dedicated Theme icon: the icon of the
+		-- skill/augment that applied it. Client uses it only when GetStatusIcon is nil.
+		sourceIcon     = sourceIcon,
+		-- Fallback description/duration for synthetic pills (stance self-buffs) whose
+		-- id is NOT in GameConstants.STATUSES. The detailed inspector reads these when
+		-- it has no status-table def to pull description/duration from.
+		sourceDesc     = sourceDesc,
+		sourceDuration = sourceDuration,
+	})
+	-- BUG-197 (batch 16): Counter Stance with Recharge Support logged "gains Recharge (3000 CT)." BEFORE the
+	-- Counter Stance line, with no cause (the Support rider runs inside the commit; the cast line goes out
+	-- after it, at the end of an AI turn). The BUG-187 "is now Recharge (Counter Stance)." line in UnitActed
+	-- never fired, because this line had already marked Recharge as shown. Held hit command: hold the caused
+	-- line for after the skill's line (released by UnitActed for that unit, else with the action's pushes).
+	if type(causeLabel) == "string" and causeLabel ~= "" and _holdPushes and not _capture
+		and unit and unit.id ~= nil then
+		-- BUG-203 (Tester batch 16 W2): held with its status id, so UnitActed can drop it when the hit line already
+		-- names this status ("+Poison" then "is now Poison (Venomous Support)." was the same application twice).
+		-- BUG-204 (Tester batch 16 BUG-201 low): a tile status (TileEffectService passes "<tile id> tile") that a held
+		-- hit's knockback put the unit on goes AFTER the push line: it uses the after-push slot (afterKo lines are
+		-- sent after the pushes and KOs in UnitActed / ReleaseHeldPushes / FlushHeldPushes). It is a separate
+		-- application from the hit, so it is never dropped as a duplicate (no statusId).
+		local _isTile = string.sub(causeLabel, -5) == " tile"
+		table.insert(_heldHitLines, { anchorId = unit.id, category = "status",
+			text = `{unitName(unit)} is now {statusName(statusId)} ({causeLabel}).`, unitId = unit.id,
+			statusId = if _isTile then nil else statusId, afterKo = if _isTile then true else nil })
+		syncStatus(unit, statusId, true)
+		local _hs = _snap[unit.id]
+		local _hInst = StatusService.HasStatus(unit, statusId)
+		if _hs and type(_hInst) == "table" then
+			_hs.statusLogged = _hs.statusLogged or {}
+			_hs.statusLogged[statusId] = { inst = _hInst, stamp = `{tostring(_hInst.remainingCt)}|{tostring(_hInst.remainingTurns)}` }
+		end
+		return
+	end
+	do
+		local _inst = StatusService.HasStatus(unit, statusId)
+		local dur = ""
+		-- BUG-167 (batch 13): a CT status shows the duration it actually got (the live instance, after skill
+		-- override, traits, Lore, doctrine, Debuff Resistance and the boss rules), not the base def.durationCt
+		-- (log said "gains Silence (2000 CT)" for a boss Silence of 862 CT). Base value only without an instance.
+		if type(_inst) == "table" and type(_inst.remainingCt) == "number" then
+			dur = ` ({math.round(_inst.remainingCt)} CT)`
+		elseif def and def.durationCt then
+			dur = ` ({def.durationCt} CT)`
+		elseif type(remainingTurns) == "number" then
+			dur = ` ({remainingTurns} turn{if remainingTurns == 1 then "" else "s"})`
+		end
+		-- Item 10 (2026-11-08 11:52 PM): one application = one line. An augment (e.g. Pinning Support) announces
+		-- its status when it lands; the action summary (BattleTurnController) then announced the same status
+		-- again. Skip the line when this exact instance (same table, same time left) was already logged.
+		local _stamp = if _inst then `{tostring(_inst.remainingCt)}|{tostring(_inst.remainingTurns)}` else nil
+		local _s = if unit and unit.id ~= nil then _snap[unit.id] else nil
+		local _prev = _s and _s.statusLogged and _s.statusLogged[statusId]
+		local _dup = _inst ~= nil and _prev ~= nil and _prev.inst == _inst and _prev.stamp == _stamp
+		if not _dup then
+			-- BUG-201 (batch 16): a caller that knows the cause names it ("Timesovereign Bloodrage gains Poison
+			-- from Poison Cloud tile (5 turns)."); was "gains Poison (5 turns)." with no cause.
+			if type(causeLabel) == "string" and causeLabel ~= "" then
+				logEntry("status", `{unitName(unit)} gains {statusId} from {causeLabel}{dur}.`, unit.id)
+			else
+				logEntry("status", `{unitName(unit)} gains {statusId}{dur}.`, unit.id)
+			end
+		end
+		syncStatus(unit, statusId, true)
+		_s = if unit and unit.id ~= nil then _snap[unit.id] else nil  -- syncStatus may have just seeded it
+		if _s and _inst then
+			_s.statusLogged = _s.statusLogged or {}
+			_s.statusLogged[statusId] = { inst = _inst, stamp = _stamp }
+		end
+	end
+	task.wait(PACE.Status)
+end
+
+function BattleVisualBroadcaster.StatusExpired(unit, statusId)
+	BattleEvents.StatusExpired:FireAllClients({
+		unitId   = unit.id,
+		statusId = statusId,
+	})
+	logEntry("status", `{statusId} wears off {unitName(unit)}.`, unit.id)
+	syncStatus(unit, statusId, false)
+end
+
+-- BUG-140 (BUG-HUNT-09 / BUG-HUNT-16, 2026-11-22): a status ran out on its own (StatusService turn / CT
+-- expiry, injected by Main). Record it now with NO cause (existing "<unit> is no longer <status>." line),
+-- so a later, unrelated cause ("Taunt", "Burning tile", "Regeneration") is never stamped on it.
+function BattleVisualBroadcaster.StatusWoreOff(unit, statusId)
+	if not unit or unit.id == nil or statusId == nil then return end
+	local s = _snap[unit.id]
+	if not s or not s.st[statusId] then return end  -- never shown as present: nothing to report
+	if StatusService.HasStatus(unit, statusId) then return end  -- re-applied in the same step
+	retract(unit.id, STATUS_REM_KIND, statusId)
+	s.st[statusId] = nil
+	-- BUG-145 (Tester batch 10 A1): written at once, not buffered, so a later caused relabel / group of the
+	-- same unit can never stamp a cause on it. Same text as entryText's uncaused "statusRem" line.
+	flushLog()
+	fireLogRaw("status", `{unitName(unit)} is no longer {statusName(statusId)}.`, unit.id)
+end
+
+-- BUG-219 (batch 18b, Tester W1 on BUG-218): a stat status (Weakened, a VIT buff ending ...) rebuilt the unit and
+-- its current HP was capped to the new Max HP (StatusService.syncStatStatus). Logs why the HP dropped, and syncs the
+-- log HP so the drop is not shown again as damage in the next hit line or HP diff. Held like any after-hit line
+-- while a hit command is held (goes right after the hit line on this unit), else sent now.
+function BattleVisualBroadcaster.MaxHpCapped(unit, n, statusId)
+	if not unit or unit.id == nil or (n or 0) <= 0 then return end
+	syncHp(unit)
+	local text = `{unitName(unit)}'s Max HP drops to {unit.maxHp or 0} ({statusName(statusId)}): -{n} HP ({unit.currentHp or 0}/{unit.maxHp or 0}).`
+	if _holdPushes and not _capture then
+		emitAfterHit(unit.id, "status", text, unit.id)
+	else
+		logEntry("status", text, unit.id)
+	end
+end
+
+function BattleVisualBroadcaster.TurnEnded(unit, nextRt)
+	BattleEvents.TurnEnded:FireAllClients({
+		unitId   = unit.id,
+		nextRt   = nextRt,
+		statuses = StatusService.GetStatusSummary(unit),
+		currentMp = unit.currentMp or 0,
+	})
+	if unit.isAlive and type(nextRt) == "number" then
+		logEntry("rt", `{unitName(unit)} acts again in {nextRt} RT.`, unit.id)
+	end
+	task.wait(PACE.TurnEnd)
+end
+
+-- extra (2026-11-18, in-battle Escape): optional { escaped = true } -> the client shows "ESCAPED".
+function BattleVisualBroadcaster.BattleEnded(winner, units, extra)
+	BattleVisualBroadcaster.FlushHeldPushes()  -- Job 1: nothing held is lost at battle end
+	local serialized = {}
+	for _, unit in ipairs(units) do
+		table.insert(serialized, serializeUnit(unit))
+	end
+
+	BattleEvents.BattleEnded:FireAllClients({
+		winner = winner,
+		units  = serialized,
+		escaped = type(extra) == "table" and extra.escaped == true or nil,
+	})
+	flushPendingKo()  -- R7: a held KO line still goes before the result line
+	logEntry("info", `Battle over: {tostring(winner)} wins.`)
+	BattleVisualBroadcaster.ResetLogState()
+	task.wait(PACE.BattleEnd)
+end
+
+--------------------------------------------------
+-- GUARD
+--------------------------------------------------
+
+function BattleVisualBroadcaster.GuardActivated(unit, guardRt, mitigation)
+	BattleEvents.GuardActivated:FireAllClients({
+		unitId  = unit.id,
+		guardRt = guardRt,
+		mitigation = mitigation or 0.35,
+	})
+	logEntry("action", `{unitName(unit)} guards (-{math.round((mitigation or 0.35) * 100)}% damage taken), RT +{guardRt or 0}.`, unit.id)
+	-- BUG-140 (BUG-HUNT-09): the line above already says it; mark Guard as shown so the next caused diff
+	-- does not log "<unit> is now Guard (Sentry Turret)".
+	if StatusService.HasStatus(unit, "Guard") then
+		syncStatus(unit, "Guard", true)
+	end
+	task.wait(PACE.Action * 0.5)
+end
+
+--------------------------------------------------
+-- PUSH
+--------------------------------------------------
+
+function BattleVisualBroadcaster.UnitPushed(pusher, target, result, cause)
+	-- Job 1 (2026-11-09): built now (this push's own HP values); sent now, or held for the hit that caused it.
+	local held = _holdPushes
+	local payload = {
+		pusherId       = pusher.id,
+		targetId       = target.id,
+		pushed         = result.pushed,
+		tilesDisplaced = result.tilesDisplaced,
+		finalTileX     = result.finalTileX,
+		finalTileY     = result.finalTileY,
+		wallDamage     = result.wallCollision and result.wallCollision.damage or 0,
+		fallDamage     = result.fallDamage or 0,
+		blockedBy      = result.blockedBy,
+		targetHp       = target.currentHp,
+		targetMaxHp    = target.maxHp,
+		-- Unit the target was shoved into (2026-10-30, visual only): its HP after the
+		-- collision, so the client can update its bar and show a collision KO.
+		collidedId     = result.wallCollision and result.wallCollision.collidedUnitId or nil,
+		collidedHp     = result.wallCollision and result.wallCollision.collidedUnitHpAfter or nil,
+	}
+	if not held then BattleEvents.UnitPushed:FireAllClients(payload) end
+	do
+		local text
+		local wallDmg = result.wallCollision and result.wallCollision.damage or 0
+		-- Item 8 (2026-11-08 11:52 PM): the unit it was shoved / pulled into (e.g. Vortex Strike pulling a unit
+		-- into its caster) also takes collision damage: log it, with the cause when the caller gives one.
+		local hitId = result.wallCollision and result.wallCollision.collidedUnitId or nil
+		local hitDmg = result.wallCollision and result.wallCollision.collidedUnitDamage or 0
+		local hitUnit = if hitId ~= nil then _unitsById[hitId] else nil
+		-- BUG-215 (batch 18, Tester pass 7): the log shows the HP each unit really lost (CommandService records
+		-- targetHpLost / collidedUnitHpLost around ApplyDamage), not the raw collision / fall damage: a 1-HP unit
+		-- shoved into read "Hero -10 HP (0/233)". Callers that record nothing keep the raw numbers.
+		local hitShown = (result.wallCollision and result.wallCollision.collidedUnitHpLost) or hitDmg
+		local wallShown, fallShown = wallDmg, (result.fallDamage or 0)
+		if type(result.targetHpLost) == "number" then
+			local lost = result.targetHpLost
+			wallShown = math.min(wallDmg, lost)
+			fallShown = math.min(fallShown, math.max(0, lost - wallShown))
+		end
+		-- BUG-222 (batch 18b, Tester W3): a part where no HP was really lost (full shield, dead collided unit) is not shown.
+		local hitText = if hitUnit and hitShown > 0
+			then `, {unitName(hitUnit)} -{hitShown} HP ({hitUnit.currentHp or 0}/{hitUnit.maxHp or 0})` else ""
+		local causeText = if cause then ` ({tostring(cause)})` else ""
+		-- BUG-208 (batch 17): the line names who pushed / pulled; result.isPull is set by applyKnockback.
+		-- BUG-224 (batch 18b, Studio pass 8): the same verb is used when the pull really moves the unit (it read
+		-- "<puller> pushes <unit> 1 tile"), not only for a blocked pull.
+		local verb = if result.isPull == true then "pulls" else "pushes"
+		if result.pushed and (result.tilesDisplaced or 0) > 0 then
+			text = `{unitName(pusher)} {verb} {unitName(target)} {result.tilesDisplaced} tile{if result.tilesDisplaced == 1 then "" else "s"}`
+			if wallShown > 0 then text ..= `, wall hit -{wallShown} HP` end
+			if fallShown > 0 then text ..= `, fall -{fallShown} HP` end
+			text ..= ` ({target.currentHp or 0}/{target.maxHp or 0})`  -- R7 (handoff 1): the pushed unit's own HP
+			text ..= hitText .. causeText .. "."
+		elseif wallDmg > 0 or hitText ~= "" then
+			-- Blocked, but it still collided (a pull into the puller, a push into an adjacent wall).
+			local into = if hitUnit then unitName(hitUnit) elseif result.blockedBy then tostring(result.blockedBy) else "an obstacle"
+			-- BUG-208 (batch 17): the line names who pushed / pulled, so a blocked knockback reads as a push. It read
+			-- "Hero collides with Puny Spellecho: -4 HP ..." with no push line before it (AI Ignition Lance with a
+			-- pull / push augment, the unit next to the target in the way). verb is set above (shared with the moved line).
+			text = `{unitName(pusher)} {verb} {unitName(target)} into {into} (blocked): -{wallShown} HP ({target.currentHp or 0}/{target.maxHp or 0}){hitText}{causeText}.`
+		else
+			text = `{unitName(pusher)}'s push on {unitName(target)} is blocked{if result.blockedBy then ` by {tostring(result.blockedBy)}` else ""}.`
+		end
+		-- BUG-202 (Tester batch 15b/16 W1, BUG-194): the held entry remembers which KOs this push queued (koIds),
+		-- so UnitActed flushes exactly those KO lines when it sends the push.
+		local _heldEntry = nil
+		-- BUG-207 (batch 17): status lines of the landing tile / terrain (CommandService applyForcedEntryEffects ->
+		-- EntryStatus) ride with this push and are logged right after its line, held or not.
+		local _after = if type(result.entryLines) == "table" and #result.entryLines > 0 then result.entryLines else nil
+		if held then
+			_heldEntry = { targetId = target.id, payload = payload, text = text, pusherId = pusher.id, afterLines = _after }
+			table.insert(_heldPushes, _heldEntry)
+		else
+			logEntry("action", text, pusher.id)
+			if _after then
+				for _, l in ipairs(_after) do logEntry("status", l.text, l.unitId) end
+			end
+		end
+		-- BUG-212 (batch 17c, Tester F1 on BUG-211): the push's after-push lines can carry damage (Raptured, hpLoss).
+		-- Count it too, so a push that itself did no damage still syncs the log HP and queues the KO line.
+		local _entryHp = 0
+		if _after then
+			for _, l in ipairs(_after) do _entryHp += (l.hpLoss or 0) end
+		end
+		local _pd = (result.wallCollision and result.wallCollision.damage or 0) + (result.fallDamage or 0) + _entryHp
+		-- KO lines only when the log still shows the unit standing (no second KO line if another
+		-- broadcast already reported it).
+		local function shownAlive(u: any): boolean
+			local s = u and u.id ~= nil and _snap[u.id]
+			return s ~= nil and s ~= false and s.alive == true
+		end
+		-- Rulings R7 (handoff 1, 2026-11-09): the KO is HELD (queueKo), not logged here, so it comes once,
+		-- after the hit line of the same attack / skill (UnitActed); unclaimed ones at the batch end.
+		if _pd > 0 then
+			local wasShown = shownAlive(target)
+			syncHp(target)
+			if wasShown then
+				queueKo(target)
+				if _heldEntry and target.id ~= nil and target.isAlive == false then
+					_heldEntry.koIds = _heldEntry.koIds or {}; _heldEntry.koIds[target.id] = true
+				end
+			end
+		elseif target and target.id ~= nil and _snap[target.id] then _snap[target.id].alive = target.isAlive ~= false end
+		if hitUnit and hitDmg > 0 then
+			local wasShown = shownAlive(hitUnit)
+			syncHp(hitUnit)
+			if wasShown then
+				queueKo(hitUnit)
+				if _heldEntry and hitUnit.id ~= nil and hitUnit.isAlive == false then
+					_heldEntry.koIds = _heldEntry.koIds or {}; _heldEntry.koIds[hitUnit.id] = true
+				end
+			end
+		end
+	end
+	if not held then task.wait(PACE.Action) end  -- held: the pause is taken when it is sent
+end
+
+--------------------------------------------------
+-- TURN SKIPPED (Phase 2)
+--------------------------------------------------
+
+function BattleVisualBroadcaster.TurnSkipped(unit, reason)
+	BattleEvents.TurnSkipped:FireAllClients({
+		unitId    = unit.id,
+		unitName  = unit.name,
+		side      = unit.side,
+		reason    = reason,
+	})
+	logEntry("rt", `{unitName(unit)} loses the turn ({tostring(reason or "status")}).`, unit.id)
+	task.wait(PACE.Action)
+end
+
+--------------------------------------------------
+-- STATUS IMMUNE (Phase 4)
+--------------------------------------------------
+
+function BattleVisualBroadcaster.StatusImmune(unit, statusId, reason)
+	BattleEvents.StatusImmune:FireAllClients({
+		unitId    = unit.id,
+		unitName  = unit.name,
+		statusId  = statusId,
+		reason    = reason,
+	})
+	logEntry("status", `{unitName(unit)} is immune to {statusId}{if reason then ` ({tostring(reason)})` else ""}.`, unit.id)
+	syncStatus(unit, statusId, false)
+end
+
+--------------------------------------------------
+-- TILE EFFECTS (TileEffectService)
+--------------------------------------------------
+
+-- cause (optional, Battle Log Coverage 2026-10-28): a meaningful spread/placement
+-- ("Fire") gets a grouped line ("Fire spread to 4 tiles."). nil = no line -- floor
+-- re-establish and other background re-sends stay silent.
+function BattleVisualBroadcaster.TileEffectApplied(tileX, tileY, effectId, durationCt, cause)
+	BattleEvents.TileEffectApplied:FireAllClients({
+		tileX      = tileX,
+		tileY      = tileY,
+		effectId   = effectId,
+		durationCt = durationCt,
+	})
+	cause = cause or _scopedCause
+	if type(cause) == "string" and cause ~= SILENT then
+		bufferEntry({ kind = "tileEffect", cause = cause, category = "field" })
+	end
+end
+
+function BattleVisualBroadcaster.TileEffectRemoved(tileX, tileY, effectId)
+	BattleEvents.TileEffectRemoved:FireAllClients({
+		tileX    = tileX,
+		tileY    = tileY,
+		effectId = effectId,
+	})
+end
+
+-- TERRAIN CHANGED (BUG-002 fix 2026-10-22)
+-- S->C: a tile's BASE terrain transformed mid-battle (fire burn-out grass->sand,
+-- Holy restore, Dark corrupt, Earth->Cracked, Wind->Mud, weather, explosion chain).
+-- GameConstants.TransformTerrain mutates TERRAIN_MAP server-side but the client only
+-- received terrain at map-gen (MapDataSync), so every transform was invisible. Fired
+-- by TileEffectService.transformAndBroadcast for every mid-battle transform path.
+-- Minimal payload (NET-003) and visual-only on the client (NET-001). No pacing wait
+-- (state sync, like TileEffectApplied / ObjectChanged).
+-- Temporary road (ENV-019 Road Fabricator, 2026-10-27): the client tints the tile and
+-- shows the lowered move cost. cut = 0 removes it.
+function BattleVisualBroadcaster.RoadChanged(x, y, cut)
+	BattleEvents.RoadChanged:FireAllClients({ x = x, y = y, cut = cut or 0 })
+end
+
+-- ENV-003 move-cost zone: the client tints the tile and its inspector shows the higher cost.
+-- add = 0 removes it.
+function BattleVisualBroadcaster.MoveCostChanged(x, y, add)
+	BattleEvents.MoveCostChanged:FireAllClients({ x = x, y = y, add = add or 0 })
+end
+
+-- cause (optional, 2026-10-28): names a meaningful transform ("Fire", "The explosion")
+-- -> grouped "Fire: 2 tiles became Sand." nil = background, no line.
+function BattleVisualBroadcaster.TerrainChanged(x, y, terrainId, elevation, cause)
+	-- elevation (optional, 2026-10-26): the tile's NEW elevation after a dig, so the client
+	-- height map (inspector, labels, unit token height) follows. nil = unchanged.
+	BattleEvents.TerrainChanged:FireAllClients({
+		x         = x,
+		y         = y,
+		terrainId = terrainId,
+		elevation = elevation,
+	})
+	cause = cause or _scopedCause
+	if type(cause) == "string" and cause ~= SILENT then
+		local label = tostring(terrainId)
+		local tdef = GameConstants.TERRAIN_TYPES and GameConstants.TERRAIN_TYPES[terrainId]
+		if type(tdef) == "table" and type(tdef.name) == "string" then label = tdef.name end
+		bufferEntry({ kind = "terrain", cause = cause, label = label, category = "field" })
+	end
+end
+
+--------------------------------------------------
+-- OBS OBJECT CHANGED (Phase 2c-0)
+-- S->C: a map OBS object's state changed (HP decrement / destroyed / moved).
+--------------------------------------------------
+
+-- label (optional, 2026-10-28): the object's DISPLAY type (GetDisplayType -- never the
+-- true type of a disguised Mimic). When given, destroyed / moved / exploded changes get a
+-- grouped log line. info.exploded = true -> "Bomb Barrel exploded." instead of destroyed.
+-- Hidden objects are never broadcast, so they are never logged.
+function BattleVisualBroadcaster.ObjectChanged(x, y, info, label)
+	-- Fired by ObjectEffectService.ApplyObjectHit. The client updates the
+	-- inspector HP readout and, on destroy, drops its own blocker so the opened
+	-- tile is walkable/visible. No pacing wait (state sync, like UnitStateChanged).
+	--   info.newHp     (number)   -> HP decremented to this value
+	--   info.destroyed (true)     -> object broke and was removed; tile reverts
+	--   info.moved     ({toX,toY})-> pushed to a new tile (emitted from Phase 2c-E)
+	info = info or {}
+	BattleEvents.ObjectChanged:FireAllClients({
+		x         = x,
+		y         = y,
+		newHp     = info.newHp,
+		destroyed = info.destroyed == true or nil,
+		moved     = info.moved,
+		objType   = info.objType,  -- A3: post-unmask display type refresh (nil otherwise)
+	})
+	if type(label) == "string" and label ~= "" and label ~= SILENT then
+		local kind = nil
+		if info.exploded == true then kind = "objExploded"
+		elseif info.destroyed == true then kind = "objDestroyed"
+		elseif info.moved then kind = "objPushed"
+		elseif info.hit == true then kind = "objHit" end  -- F4: info.by = what hit it (nil = unknown)
+		if kind == "objHit" then
+			bufferEntry({ kind = kind, cause = info.by, label = label, category = "field" })
+		elseif kind then
+			bufferEntry({ kind = kind, cause = label, label = label, category = "field" })
+		end
+	end
+end
+
+--------------------------------------------------
+-- TRAP SPRUNG (2026-10-28)
+-- S->C: a step-on trap fired at (x,y). Display-only floating indicator; fired by
+-- ObjectEffectService.TriggerTrap (covers hidden traps the client never drew).
+--------------------------------------------------
+
+--------------------------------------------------
+-- OBJECT MARKER (2026-11-07, 18 new map objects)
+-- S->C: tiles a map object will hit (Volcanic Vent next targets, Arcane Cannon danger line,
+-- Heavy Artillery red cross). key = one marker set per source; an empty tile list clears it.
+-- Display-only, no log line, no pacing wait. Payload = tile pairs only (NET-003).
+--------------------------------------------------
+function BattleVisualBroadcaster.ObjectMarker(key, tiles)
+	if type(key) ~= "string" then return end
+	local out = {}
+	for _, t in ipairs(tiles or {}) do
+		if type(t.x) == "number" and type(t.y) == "number" then
+			out[#out + 1] = { t.x, t.y }
+		end
+	end
+	BattleEvents.ObjectMarker:FireAllClients({ key = key, tiles = out })
+end
+
+function BattleVisualBroadcaster.TrapSprung(x, y, trapType, unitId, hidden)
+	BattleEvents.TrapSprung:FireAllClients({
+		x        = x,
+		y        = y,
+		trapType = trapType,
+		unitId   = unitId,
+		hidden   = hidden == true,
+	})
+end
+
+--------------------------------------------------
+-- UNIT STATE CHANGE (revive, etc.)
+-- Generic broadcast for HP/isAlive changes outside normal combat.
+--------------------------------------------------
+
+-- cause (optional, Battle Log Coverage 2026-10-28): names what changed the unit
+-- ("Hail", "Retribution"). nil falls back to the SetCause scope; still nil = the HP/KO
+-- line uses neutral wording plus a [BattleLog] warn; MP changes with no cause stay
+-- silent. SILENT ("__silent") absorbs the change without logging.
+function BattleVisualBroadcaster.UnitStateChanged(unit, cause, logMp)
+	if unit then
+		local c = cause or _scopedCause
+		relabel(unit.id, c)
+		_mpCauseOverride = logMp == true
+		diffUnit(unit, c)
+		_mpCauseOverride = false
+	end
+	BattleEvents.UnitStateChanged:FireAllClients({
+		unitId    = unit.id,
+		hp        = unit.currentHp,
+		maxHp     = unit.maxHp,
+		-- D4 (2026-11-07): MP rides along so object MP changes (Garden of Revelation's new max MP,
+		-- Magic Spring / Oasis restores) show at once instead of at the unit's next turn start.
+		mp        = unit.currentMp,
+		maxMp     = unit.maxMp,
+		isAlive   = unit.isAlive,
+		-- Side rides along (2026-11-12, display only): a recruit / Traitor flip (Enemy -> Neutral) keeps
+		-- the client's overhead bar side outline in sync. The server stays the authority.
+		side      = unit.side,
+		-- Statuses ride along so a heal that weakens/cures Venom shows at once (2026-10-26).
+		statuses  = if unit.statusInstances then StatusService.GetStatusSummary(unit) else nil,
+	})
+end
+
+-- Status-only refresh (sweep 2026-11-06): sends the unit's current HP/statuses to clients WITHOUT
+-- writing a battle-log HP diff. Used mid-hit (status conflict removals, e.g. Wet clearing Burn during
+-- an attack) so the hit's own caused broadcast still logs the HP change; the old full
+-- UnitStateChanged here logged it as an "uncaused hpLoss".
+function BattleVisualBroadcaster.StatusSync(unit)
+	if not unit then return end
+	BattleEvents.UnitStateChanged:FireAllClients({
+		unitId    = unit.id,
+		hp        = unit.currentHp,
+		maxHp     = unit.maxHp,
+		isAlive   = unit.isAlive,
+		statuses  = if unit.statusInstances then StatusService.GetStatusSummary(unit) else nil,
+	})
+end
+
+-- BUG-198 (batch 16): a status change made BY a hit, inside CombatResolver.ApplyOutcome (Buff-Blind grants
+-- the target a buff, Purifier strips one). Those used a caused UnitStateChanged, whose diff also logged the
+-- hit's HP ("Buff-Blind hit X for 28.") and the status ("X is now Hold the Line (Buff-Blind).") BEFORE the
+-- attack line, which then showed the same -28 HP again. Now: no HP diff here (the hit line logs the HP).
+-- A status the hit added is named by the hit line ("+<status>", or the BUG-178 "is now <status> (<cause>)."
+-- in UnitActed). A status it removed gets "<unit> is no longer <status> (<cause>).", held for after the hit
+-- line while the hit command is held. The client gets the new statuses now (StatusSync, no log).
+function BattleVisualBroadcaster.HitStatusChanged(unit, cause)
+	if not unit or unit.id == nil then return end
+	local s = _snap[unit.id]
+	if not s then
+		seedUnit(unit)
+	else
+		local now = statusSet(unit)
+		for id in pairs(s.st) do
+			if not now[id] then
+				retract(unit.id, STATUS_REM_KIND, id)
+				s.st[id] = nil
+				emitAfterHit(unit.id, "status", `{unitName(unit)} is no longer {statusName(id)} ({tostring(cause or "hit")}).`, unit.id)
+			end
+		end
+	end
+	BattleVisualBroadcaster.StatusSync(unit)
+end
+
+-- BUG-207 (batch 17, BUG-204 recurrence; Studio pass 6): a status a unit got from the tile / terrain it was pushed,
+-- pulled or moved onto (Poison Cloud, Burning, Deep Water -> Drowning, Bone Pillar -> Bleed). The tile cross path
+-- used a caused UnitStateChanged, whose diff ran inside the held hit: it logged the HIT's own HP loss as
+-- "Poison Cloud tile hit X for 28." and "X is now Poison (Poison Cloud tile)." BEFORE the hit and push lines.
+-- Now: no HP diff at all (the hit line and the push line log the HP), one "<unit> is now <status> (<cause>)."
+-- line. deferList (from the push that caused it): the line rides with that push and is logged right after
+-- its push line (UnitPushed / releaseHeldPushes). No deferList: held hit -> after the pushes (afterKo slot),
+-- else logged now. The client gets the new statuses now (StatusSync, no log).
+-- BUG-213 (batch 17c, Tester W2 on BUG-205): each status logged here is also marked in _entryMarks
+-- ([unitId][statusId] = true), so the AI BUG-205 ally loop can skip it (no second "+Poison" for the same tile status).
+local _entryMarks = {}
+
+-- BUG-213: returns the marks made since the last call and clears them. BattleTurnController calls it once
+-- before an AI Skill commit (drop stale marks) and once after (the marks of that commit).
+function BattleVisualBroadcaster.TakeEntryMarks(): { [any]: { [string]: boolean } }
+	local m = _entryMarks
+	_entryMarks = {}
+	return m
+end
+
+function BattleVisualBroadcaster.EntryStatus(unit, statusId, causeLabel, deferList)
+	if not unit or unit.id == nil or statusId == nil then return end
+	local text = `{unitName(unit)} is now {statusName(statusId)} ({tostring(causeLabel or "tile")}).`
+	syncStatus(unit, statusId, true)  -- a later diff does not log this status again
+	_entryMarks[unit.id] = _entryMarks[unit.id] or {}
+	_entryMarks[unit.id][statusId] = true  -- BUG-213
+	if type(deferList) == "table" then
+		table.insert(deferList, { text = text, unitId = unit.id })
+	elseif _holdPushes and not _capture then
+		table.insert(_heldHitLines, { anchorId = unit.id, category = "status", text = text, unitId = unit.id, afterKo = true })
+	else
+		logEntry("status", text, unit.id)
+	end
+	BattleVisualBroadcaster.StatusSync(unit)
+end
+
+-- Object-sourced damage feedback (2026-10-26). Map objects that deal damage used
+-- to send only a bare HP sync (UnitStateChanged) with no number/flash/camera move,
+-- so hits felt invisible -- especially when the victim was off-screen. This fires a
+-- dedicated event the client turns into a floating damage number + impact flash on
+-- the tile, plus a camera pan to the tile when focus=true. Callers pass focus=true
+-- for the FIRST unit hit in an interaction (mirrors the attack/skill camera focus).
+-- cause (optional, 2026-10-28): the object/source name ("Spike Trap", "Ballista").
+-- Logs "<cause> hit <name> for N." for the unit on the tile, relabelling any uncaused
+-- line a preceding UnitStateChanged already buffered (one event = one line).
+function BattleVisualBroadcaster.ObjectDamage(tileX, tileY, amount, focus, cause)
+	BattleEvents.ObjectDamage:FireAllClients({
+		tileX  = tileX,
+		tileY  = tileY,
+		amount = amount,
+		focus  = focus == true,
+	})
+	local c = cause or _scopedCause
+	if c ~= nil then
+		local u = unitAtTile(tileX, tileY)
+		if u then
+			relabel(u.id, c)
+			diffUnit(u, c)
+		end
+	end
+end
+
+-- Explosion damage (Bomb Barrel / Land Mine). TileEffectService already CALLS
+-- BattleVisualBroadcaster.ExplosionDamage, but the function never existed (the call
+-- was a guarded silent no-op), so explosions showed no damage number. Define it now
+-- and route it through the shared ObjectDamage feedback. focus defaults to false;
+-- the explosion loop passes focus=true for its first damaged tile.
+-- Explosions write HP directly and send no UnitStateChanged, so this is their only log
+-- line (DotDamage is only the no-ExplosionDamage fallback). Default cause "The explosion".
+function BattleVisualBroadcaster.ExplosionDamage(tileX, tileY, amount, focus, cause)
+	BattleVisualBroadcaster.ObjectDamage(tileX, tileY, amount, focus == true, cause or _scopedCause or "The explosion")
+end
+
+--------------------------------------------------
+-- FACING CHANGE
+-- Broadcasts when a unit's facing direction changes.
+--------------------------------------------------
+
+--------------------------------------------------
+-- ACTION ANNOUNCED
+-- Fired when a unit commits an AP action (Move / Basic Attack / Skill / Guard /
+-- Push / Item) and when a channeled skill fires. Client shows the label above
+-- the unit's head for ~2s. No pacing wait - the action's own event follows.
+--------------------------------------------------
+
+-- animKind (optional, 2026-10-28): animation the announcing unit plays with the label
+-- (Push / Interact / Open Treasure / Big Spell). nil = label only.
+-- meta (optional, 2026-11-18 name banner): { skillId = id } or { itemId = id }. The server only
+-- sends the kind and the content id (NET-001/NET-003); the client draws the text-only
+-- upper-centre banner. kind: "skill" | "special" (doctrine skills, ids "DOC-") | "item" | "basic"
+-- | "channel" (meta.channelStart: a deferred cast begins; meta.animOnly: animation-only re-send;
+-- no banner, no head label).
+function BattleVisualBroadcaster.ActionAnnounced(unit, label, animKind, meta)
+	if not unit or type(label) ~= "string" or label == "" then return end
+	local kind, ref = "basic", nil
+	if type(meta) == "table" then
+		if type(meta.itemId) == "string" and meta.itemId ~= "" then
+			kind, ref = "item", meta.itemId
+		elseif type(meta.skillId) == "string" and meta.skillId ~= "" then
+			ref = meta.skillId
+			kind = if string.sub(ref, 1, 4) == "DOC-" then "special" else "skill"
+		elseif meta.channelStart == true or meta.animOnly == true then
+			-- channel / activation wait begins (banner shows when the skill goes off), or an animation-only
+			-- re-send (AI ground casts, BattleTurnController): no banner, no head label; animKind still plays.
+			kind = "channel"
+		end
+	end
+	BattleEvents.ActionAnnounced:FireAllClients({ unitId = unit.id, label = label, animKind = animKind,
+		kind = kind, ref = ref })
+end
+
+function BattleVisualBroadcaster.FacingChanged(unit)
+	BattleEvents.FacingChanged:FireAllClients({
+		unitId = unit.id,
+		facing = unit.facing,
+		tileX  = unit.tileX,
+		tileY  = unit.tileY,
+	})
+end
+
+--------------------------------------------------
+-- ITEM USED
+-- Broadcasts when a unit uses a consumable item.
+--------------------------------------------------
+
+function BattleVisualBroadcaster.ItemUsed(actor, target, itemName, effectResult)
+	effectResult = effectResult or {}
+	BattleEvents.ItemUsed:FireAllClients({
+		actorId     = actor.id,
+		actorName   = actor.name,
+		targetId    = target and target.id,
+		targetName  = target and target.name,
+		itemName    = itemName,
+		effectType  = effectResult.effectType,
+		amount      = effectResult.amount or 0,
+		statusId    = effectResult.statusId,
+		element     = effectResult.element,
+		actorTileX  = actor.tileX,
+		actorTileY  = actor.tileY,
+		targetTileX = target and target.tileX,
+		targetTileY = target and target.tileY,
+	})
+	do
+		local tName = (target and target.name) or unitName(actor)
+		local amount = effectResult.amount or 0
+		local et = effectResult.effectType
+		local summary
+		if et == "Heal" or et == "Healing" then summary = `{tName} +{amount} HP`
+		elseif et == "MpRestore" then summary = `{tName} +{amount} MP`
+		elseif et == "StatusCure" then summary = `cured {effectResult.statusId or "status"} on {tName}`
+		elseif et == "StatusApply" then summary = `{effectResult.statusId or "status"} on {tName}`
+		elseif et == "Damage" then summary = `{tName} -{amount} HP`
+		elseif et == "Revive" then summary = `revived {tName}`
+		-- Placements (2026-10-27): say what was placed, never where (hidden traps stay hidden).
+		elseif et == "Deploy" then summary = effectResult.description or "placed"
+		elseif et == "DeployFailed" then summary = "placement failed"
+		elseif et == nil or et == "Unimplemented" then summary = "no effect"
+		else summary = `on {tName}` end
+		logEntry("action", `{unitName(actor)} uses {itemName or "item"}: {summary}.`, actor.id)
+		-- dedup: the item line already described this; refresh the target snapshot.
+		if target then
+			if et == "Heal" or et == "Healing" then syncHp(target)
+			elseif et == "Damage" then syncHp(target)
+			elseif et == "MpRestore" and target.id ~= nil and _snap[target.id] then _snap[target.id].mp = target.currentMp or 0
+			elseif et == "StatusCure" then syncStatus(target, effectResult.statusId, false)
+			elseif et == "StatusApply" then syncStatus(target, effectResult.statusId, true) end
+		end
+	end
+end
+
+-- Announce a single unit that entered the battle mid-fight (reinforcement).
+-- The client spawns its token/health bar/facing using the same serialized
+-- payload shape as BattleStarted, so the new unit renders identically to
+-- units present at battle start.
+-- Remove a unit's token from every client right now (2026-10-26: a replaced item
+-- device). Same payload Main sends for a KO'd unit.
+function BattleVisualBroadcaster.UnitRemoved(unit)
+	if not unit then return end
+	BattleEvents.UnitDefeated:FireAllClients({ unitId = unit.id, removeUnit = true })
+end
+
+-- MID-BATTLE MODELS (2026-11-10 fix): battle-start / deployment build each unit's R15 race
+-- model in Main, but units that join mid-battle (Dragon Utopia, Mimic, events, summons,
+-- revives) only fired UnitSpawned, so the client found no model and drew the cylinder.
+-- Main injects its model builder here (DI: no require of Main). Runs before the client is
+-- told, so the model already exists when spawnToken looks for it. Missing model -> no-op.
+local _unitModelBuilder: ((unit: any) -> ())? = nil
+function BattleVisualBroadcaster.SetUnitModelBuilder(fn: (unit: any) -> ())
+	_unitModelBuilder = fn
+end
+
+-- CINEMATIC HOLD (user 2026-11-18 6:10 PM): a battlefield-event spawn plays a 2 s camera focus on
+-- the client. The turn loop (Main) calls WaitCinematicHold() before each TurnStarted, so the next
+-- turn's moves are not shown off-camera. Only event spawns (unit.eventName) set it; the wait is
+-- capped and only blocks the turn-loop thread (task.wait), nothing else.
+local CINEMATIC_HOLD_SECONDS = 2.2
+local _cinematicHoldUntil = 0
+function BattleVisualBroadcaster.WaitCinematicHold(): boolean
+	local remain = _cinematicHoldUntil - os.clock()
+	_cinematicHoldUntil = 0
+	if remain <= 0 then return false end
+	task.wait(math.min(remain, CINEMATIC_HOLD_SECONDS))
+	return true
+end
+
+-- opts (optional, BUG-143): { revive = true } = a revive re-creating a removed token (Rescue Beacon). It is
+-- not a unit entering the battle, so no "enters the battle" line (the revive logs its own line).
+function BattleVisualBroadcaster.UnitSpawned(unit, opts)
+	if type(unit) == "table" and type(unit.eventName) == "string" and unit.eventName ~= "" then
+		_cinematicHoldUntil = math.max(_cinematicHoldUntil, os.clock() + CINEMATIC_HOLD_SECONDS)
+	end
+	if _unitModelBuilder then
+		local ok, err = pcall(_unitModelBuilder, unit)
+		if not ok then warn(`[BattleVisualBroadcaster] model build failed for {tostring(unit and unit.name)}: {err}`) end
+	end
+	BattleEvents.UnitSpawned:FireAllClients({
+		unit = serializeUnit(unit),
+		-- 2026-11-18: battlefield-event units carry their event name so the client can play the
+		-- 2 s camera focus with the name banner. Nil for summons, revives and goal spawns.
+		eventName = if type(unit) == "table" and type(unit.eventName) == "string" and unit.eventName ~= "" then unit.eventName else nil,
+	})
+	seedUnit(unit)
+	-- 2026-11-22 batch 11 (playtest log review): a unit entering is a battlefield change, not a KO, so the
+	-- line is filed under "field" (was "ko"; the client only treats "turn" specially). Text unchanged.
+	if not (type(opts) == "table" and opts.revive == true) then
+		logEntry("field", `{unitName(unit)} enters the battle.`, unit.id)
+	end
+end
+
+-- Time cycle: broadcast the current time-of-day phase (Dawn/Day/Dusk/Night).
+function BattleVisualBroadcaster.TimePhaseChanged(phase)
+	BattleEvents.TimePhaseChanged:FireAllClients({ phase = phase })
+	logEntry("field", `Time of day: {tostring(phase)}.`)
+end
+
+-- Weather/crisis: broadcast the active condition (one combined slot, per round).
+function BattleVisualBroadcaster.WeatherChanged(condition)
+	BattleEvents.WeatherChanged:FireAllClients({ condition = condition })
+	do
+		local n = if type(condition) == "table" then (condition.name or condition.id) else condition
+		logEntry("field", if n and n ~= "" and n ~= "None" then `Condition: {tostring(n)}.` else "Weather clears.") -- user 2026-11-18 12:56 AM (rule 275 term)
+	end
+end
+
+-- Battlefield event: broadcast that a named battlefield event triggered so the
+-- client can show a dramatic center-screen banner. Visual-only announcement.
+-- quiet=true: update the Event panel only, no dramatic banner (used to resync
+-- start-of-battle events after BattleStarted so the banner doesn't replay).
+function BattleVisualBroadcaster.BattlefieldEventAnnounced(eventName, quiet)
+	-- eventName = nil clears the Event panel (dev END EVENT); always quiet (no banner).
+	if not eventName then
+		BattleEvents.BattlefieldEventAnnounced:FireAllClients({ eventName = nil, quiet = true })
+		return
+	end
+	BattleEvents.BattlefieldEventAnnounced:FireAllClients({ eventName = eventName, quiet = quiet == true })
+	if quiet ~= true then
+		logEntry("field", `Battlefield event: {tostring(eventName)}.`)
+	end
+end
+
+--------------------------------------------------
+-- SHIELD CHANGED (shield subsystem 2026-10-05)
+-- S->C: a unit's shield_total changed (granted, absorbed, decayed, or broke).
+-- Client shows a shield bar/pill and a grant/break flourish. Payload matches
+-- the BattleEvents.ShieldChanged contract { unitId, shieldTotal, delta, reason,
+-- maxHp, currentHp }. No pacing wait: grants ride the action's own pacing and
+-- decay ticks are stashed through state.ctStatusUnits (drained by Main).
+--------------------------------------------------
+
+-- cause (optional, 2026-10-28): names a grant ("Iron Barrier"). Logs grants and breaks
+-- only; absorb/decay ticks stay silent.
+function BattleVisualBroadcaster.ShieldChanged(unit, delta, reason, cause)
+	if not unit then return end
+	BattleEvents.ShieldChanged:FireAllClients({
+		unitId      = unit.id,
+		shieldTotal = unit.shield_total or 0,
+		delta       = delta or 0,
+		reason      = reason or "update",  -- "grant" | "absorb" | "decay" | "break"
+		maxHp       = unit.maxHp,
+		currentHp   = unit.currentHp,
+	})
+	local c = cause or _scopedCause
+	if c ~= SILENT then
+		if reason == "grant" and (delta or 0) > 0 then
+			bufferEntry({ text = if c then `{unitName(unit)} gained a {delta} shield ({c}).` else `{unitName(unit)} gained a {delta} shield.`,
+				kind = "shield", unitId = unit.id, category = "status" })
+		elseif reason == "break" then
+			bufferEntry({ text = `{unitName(unit)}'s shield broke.`, kind = "shield", unitId = unit.id, category = "status" })
+			-- BUG-186 (batch 15): the break line describes the Shield status going away, so the log's record of the
+			-- unit drops it too. A later caused diff logged it again under an unrelated cause ("Ranger is no
+			-- longer Shield (Fire).").
+			if not StatusService.HasStatus(unit, "Shield") then syncStatus(unit, "Shield", false) end
+		end
+	end
+end
+
+return BattleVisualBroadcaster

@@ -107,6 +107,25 @@ function PersistentStateService.GetUnitState(playerId, unitId)
 	return unitStates[playerId][unitId]
 end
 
+-- BUG-125 redo (2026-11-22, Tester UAT batch 9): ONE read for every menu that shows a unit's
+-- HP/MP/KO (Loadout GetRosterData, Units, Dispatch, Choose Party). It returns the SAVED record,
+-- which is what the next battle applies at start (Main.server "Loaded from save", DungeonBattleHooks;
+-- persistent_hp_mp_rules), so the screens show what the battle will use (ARC-001, DAT-001: no copies).
+-- Falls back to the live unit only when no record exists yet. Read-only; changes nothing.
+function PersistentStateService.GetDisplayResources(playerId, unitId, unit)
+	local ps = PersistentStateService.GetUnitState(playerId, unitId)
+	local u = unit or {}
+	if ps then
+		return {
+			currentHp = ps.currentHp or u.currentHp, maxHp = ps.maxHp or u.maxHp,
+			currentMp = ps.currentMp or u.currentMp, maxMp = ps.maxMp or u.maxMp,
+			isKO = ps.isKO == true,
+		}
+	end
+	return { currentHp = u.currentHp, maxHp = u.maxHp, currentMp = u.currentMp, maxMp = u.maxMp,
+		isKO = u.isKO == true }
+end
+
 --------------------------------------------------
 -- UPDATE AFTER EQUIPMENT/STAT CHANGE
 -- When max HP/MP changes, apply the rule:

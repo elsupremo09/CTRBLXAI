@@ -548,7 +548,7 @@ Handlers["Divine Intervention"] = function(ctx: any)
 			u.tileX, u.tileY = rx, ry
 			u.isAlive = true
 			UnitSchema.ClearChannelState(u)  -- never return holding a pre-death channel
-			u._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
+			UnitSchema.MarkRevived(u)  -- kill-credit rule (2026-10-26) + revive counter (BUG-143)
 			u.currentHp = UnitSchema.ReviveHp(u, 1)  -- full HP, revive traits apply (re-check 2026-10-29)
 			-- Turn timing resets like every other revive (USER RULING 2026-10-27 12:21): no instant
 			-- turn just because the unit's turn was due when it fell.

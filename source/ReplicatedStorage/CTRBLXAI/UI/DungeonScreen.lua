@@ -34,6 +34,12 @@ local _csMod = uiFolder:WaitForChild("CurrencyStrip", WAIT)
 local CurrencyStrip: any = if _csMod then (require :: any)(_csMod) else nil -- header currencies (2026-11-17)
 local _fiMod = uiFolder:WaitForChild("FacilityInfo", WAIT)
 local FacilityInfo: any = if _fiMod then (require :: any)(_fiMod) else nil -- ? guide panel (2026-11-17 10:06 AM)
+-- 2026-11-22 user: the pre-launch screens reuse the approved Quest Board parchment card (board) and the
+-- shared Units screen portrait card (party pick) -- no copies (DAT-001).
+local _qbMod = uiFolder:WaitForChild("QuestBoardScreen", WAIT)
+local Parchment: any = if _qbMod then ((require :: any)(_qbMod)).Parchment else nil
+local _usMod = uiFolder:WaitForChild("UnitsScreen", WAIT)
+local UnitsCard: any = if _usMod then (require :: any)(_usMod) else nil
 
 local DungeonScreen = {}
 
@@ -56,6 +62,7 @@ local BOSS_D = 62
 local MAP_PAD = 12        -- canvas padding top and bottom so no row is cut off
 local NODE_H = 44 -- touch target
 local DIM = 0.5
+local BOARD_BG_BIOME = "Cave" -- dungeon choice board background: this biome's existing map art (2026-11-22 user)
 
 -- Difficulty words (USER RULING 2026-11-13 10:08 PM; 5-step mapping = agent default).
 local DIFF_WORDS = { "Very Easy", "Easy", "Normal", "Hard", "Very Hard" }
@@ -258,10 +265,69 @@ end
 -- BOARD (no run)
 --------------------------------------------------
 
+-- 2026-11-22 12:37 AM user: biome map art (Theme.DungeonBiomeBackgrounds) + the map's dark shade behind
+-- the board / party pick. Missing biome image -> Cave (BOARD_BG_BIOME). Sibling ZIndex 0 (under the text).
+local function biomeBgId(biome: any): string?
+	local t = Theme.DungeonBiomeBackgrounds
+	if not t then return nil end
+	local id = biome ~= nil and t[tostring(biome)] or nil
+	if type(id) ~= "string" or id == "" then id = t[BOARD_BG_BIOME] end
+	return if type(id) == "string" and id ~= "" then id else nil
+end
+
+local function makeBiomeBg(main: Instance, biome: any): ImageLabel?
+	local bgId = biomeBgId(biome)
+	if not bgId then return nil end
+	local bg = Instance.new("ImageLabel")
+	bg.Name = "BoardBg"
+	bg.Image = bgId
+	bg.ScaleType = Enum.ScaleType.Crop
+	bg.Size = UDim2.fromScale(1, 1)
+	bg.BackgroundTransparency = 1
+	bg.ImageTransparency = 0.15
+	bg.ZIndex = 0
+	local shade = Instance.new("Frame")
+	shade.Name = "Shade"
+	shade.Size = UDim2.fromScale(1, 1)
+	shade.BackgroundColor3 = Color3.new(0, 0, 0)
+	shade.BackgroundTransparency = 0.45
+	shade.BorderSizePixel = 0
+	shade.ZIndex = 0
+	shade.Parent = bg
+	bg.Parent = main
+	return bg
+end
+
+-- Selection on the board: swap the existing background image in place (no board rebuild).
+local function setBoardBg(biome: any)
+	local main = screen and screen.Main
+	local bg = main and main:FindFirstChild("BoardBg")
+	local id = biomeBgId(biome)
+	if bg and id and bg:IsA("ImageLabel") then bg.Image = id end
+end
+
+-- A dungeon card tap: pick it and go to the party pick (also the Studio test hook "card:<n>").
+local function openParty(cc: any)
+	pickedCard = cc
+	setBoardBg(cc and cc.biome) -- swap the board image in place (no board rebuild)
+	picked = {}
+	partyUnits = nil
+	view = "party"
+	render()
+end
+
 local function buildBoard()
 	local main = screen.Main
+	-- Background = the selected card's biome (Cave before any pick, or if the pick left the board).
+	local selBiome = nil
+	for _, c in (st and st.choices) or {} do
+		if pickedCard ~= nil and pickedCard.id == c.id then selBiome = c.biome end
+	end
+	makeBiomeBg(main, selBiome or BOARD_BG_BIOME)
 	local intro = makeText(main, "Pick a dungeon, then choose your party.", ts(), Theme.Colors.TextSecondary) -- DG-INTRO
 	intro.Size = UDim2.new(1, 0, 0, ts() + 4)
+	intro.TextStrokeTransparency = 0.4 -- readable on the background art (Quest Board info line style)
+	intro.ZIndex = 3 -- above BoardBg (ScreenGui is ZIndexBehavior.Sibling, GuildScreen.lua:399; Tester WARN 1)
 	local grid = Instance.new("ScrollingFrame")
 	grid.Name = "Grid"
 	grid.Position = UDim2.fromOffset(0, ts() + 8)
@@ -272,44 +338,80 @@ local function buildBoard()
 	grid.ScrollingDirection = Enum.ScrollingDirection.Y
 	grid.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	grid.CanvasSize = UDim2.new()
+	grid.ZIndex = 2
+	-- Quest Board card grid: 3 parchment cards per row, sized from the real width (same formula).
+	local P = Parchment
+	local gap = (P and P.Gap) or 8
+	local pad = Instance.new("UIPadding")
+	pad.PaddingRight = UDim.new(0, 6) -- room for the scroll bar
+	pad.PaddingTop = UDim.new(0, 2)   -- selection outline clear of the grid edge
+	pad.PaddingLeft = UDim.new(0, 2)
+	pad.Parent = grid
+	local mainW = (main :: any).AbsoluteSize.X
+	if mainW <= 0 then mainW = 430 end
+	local cardW = math.max(140, math.floor((mainW - 8 - gap * 2) / 3))
+	local needH = ((P and P.PadTop) or 12) + ((P and P.PadBottom) or 10) + (body() + 2) + (ts() + 2) * 3 + 8
+	local cardH = math.max(needH, math.floor(cardW * ((P and P.Aspect) or 0.55)))
+	local sliceScale = if P then P.SliceScaleFor(main) else 0.25
 	local layout = Instance.new("UIGridLayout")
-	layout.CellSize = UDim2.new(1 / 3, -6, 0, ts() * 4 + 30)
-	layout.CellPadding = UDim2.fromOffset(4, 4)
+	layout.CellSize = UDim2.fromOffset(cardW, cardH)
+	layout.CellPadding = UDim2.fromOffset(gap, gap)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = grid
 	local choices = (st and st.choices) or {}
 	for i, c in choices do
-		local card = Instance.new("TextButton")
-		card.Name = "Card_" .. tostring(c.id)
-		card.Text = ""
-		card.AutoButtonColor = false
-		card.BackgroundColor3 = Theme.Colors.Surface
-		card.BackgroundTransparency = 0.2
-		card.BorderSizePixel = 0
-		card.LayoutOrder = i
-		corner(card)
-		local h = ts() + 4
+		-- Selected glow = the card picked last (shown after Back from the party pick).
+		local sel = pickedCard ~= nil and pickedCard.id == c.id
+		local card: any, bodyF: any, ins: { number }
+		if P then
+			card, bodyF, ins = P.Make("Card_" .. tostring(c.id), i, cardW, cardH, sliceScale, sel)
+		else -- QuestBoardScreen missing: plain card (old look) so the board still works
+			card = Instance.new("TextButton")
+			card.Name = "Card_" .. tostring(c.id)
+			card.Text = ""
+			card.AutoButtonColor = false
+			card.BackgroundColor3 = Theme.Colors.Surface
+			card.BackgroundTransparency = 0.2
+			card.BorderSizePixel = 0
+			card.LayoutOrder = i
+			corner(card)
+			bodyF = Instance.new("Frame")
+			bodyF.BackgroundTransparency = 1
+			bodyF.Position = UDim2.fromOffset(6, 6)
+			bodyF.Size = UDim2.new(1, -12, 1, -12)
+			local fl = Instance.new("UIListLayout")
+			fl.SortOrder = Enum.SortOrder.LayoutOrder
+			fl.Parent = bodyF
+			bodyF.Parent = card
+			ins = { 0, 0, 0, 0 }
+		end
+		local ink = (P and P.Ink) or Theme.Colors.TextPrimary
+		local inkSoft = (P and P.InkSoft) or Theme.Colors.TextSecondary
+		local titleCol = if P then P.TitleColor(c, ink) else Theme.Colors.TextGold
 		local lines = {
-			{ tostring(c.biome), Theme.Colors.TextGold, true },                                         -- DG-CARD-BIOME
-			{ `Difficulty {c.tier or DIFF_WORDS[c.difficulty] or "?"} · Lv {c.level or "?"}`, Theme.Colors.TextPrimary }, -- DG-CARD-DIFF (Easy/Medium/Hard, rule 276)
-			{ `Condition: {tostring(c.condition)}`, Theme.Colors.TextSecondary },           -- DG-CARD-COND (rule 275, user 2026-11-18 12:03 AM; was "Weather: {condition}")
-			{ `{c.floors} floors + Boss`, Theme.Colors.TextSecondary },                                  -- DG-CARD-FLOORS
+			{ tostring(c.biome), titleCol, true, body() },                                         -- DG-CARD-BIOME (title: Quest Board difficulty colour)
+			{ `Difficulty {c.tier or DIFF_WORDS[c.difficulty] or "?"} · Lv {c.level or "?"}`, ink }, -- DG-CARD-DIFF (Easy/Medium/Hard, rule 276)
+			{ `Condition: {tostring(c.condition)}`, inkSoft },           -- DG-CARD-COND (rule 275, user 2026-11-18 12:03 AM; was "Weather: {condition}")
+			{ `{c.floors} floors + Boss`, ink },                                  -- DG-CARD-FLOORS
 		}
 		for j, l in lines do
-			local t = makeText(card, l[1], ts(), l[2], l[3])
-			t.TextWrapped = false
-			t.TextTruncate = Enum.TextTruncate.AtEnd
-			t.Size = UDim2.new(1, -12, 0, h)
-			t.Position = UDim2.fromOffset(6, 6 + (j - 1) * (h + 2))
+			local t: any = if P then P.Line(bodyF, l[1], l[4] or ts(), l[2], l[3], j) else makeText(bodyF, l[1], ts(), l[2], l[3])
+			if t and not P then t.Size = UDim2.new(1, 0, 0, ts() + 4); t.LayoutOrder = j end
+			if t and j == 1 then -- coloured title: black outline (Quest Board card title style)
+				t.TextStrokeColor3 = Color3.new(0, 0, 0)
+				t.TextStrokeTransparency = 0
+			end
 		end
 		if c.used then
 			local dim = Instance.new("Frame")
-			dim.Size = UDim2.fromScale(1, 1)
+			dim.Name = "Dim"
+			-- covers the visible paper only (the parchment image has transparent margins)
+			dim.Position = UDim2.fromOffset(ins[1], ins[2])
+			dim.Size = UDim2.new(1, -(ins[1] + ins[3]), 1, -(ins[2] + ins[4]))
 			dim.BackgroundColor3 = Color3.new(0, 0, 0)
 			dim.BackgroundTransparency = DIM
 			dim.BorderSizePixel = 0
 			dim.ZIndex = 5
-			corner(dim)
 			local tag = makeText(dim, "Explored", ts(), Theme.Colors.TextPrimary, true) -- DG-CARD-USED
 			tag.TextXAlignment = Enum.TextXAlignment.Right
 			tag.TextYAlignment = Enum.TextYAlignment.Bottom
@@ -318,16 +420,20 @@ local function buildBoard()
 			dim.Parent = card
 		else
 			local cc = c
-			card.Activated:Connect(function()
-				pickedCard = cc
-				picked = {}
-				partyUnits = nil
-				view = "party"
-				render()
-			end)
+			card.Activated:Connect(function() openParty(cc) end)
 		end
 		card.Parent = grid
 	end
+	-- Card sizes come from Main's width: redraw once if it changes (rotate / resize). The connection
+	-- lives on the grid, destroyed by the next render (PRF-004).
+	local drawnW = mainW
+	grid:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		local w = (main :: any).AbsoluteSize.X
+		if view == "board" and w > 0 and math.abs(w - drawnW) > 4 then
+			drawnW = w
+			task.defer(render)
+		end
+	end)
 	grid.Parent = main
 	local foot = makeText(main,
 		if #choices == 0 then `No dungeons right now. New ones in {st and st.rerollIn or "?"} battles.` -- DG-NONE
@@ -335,6 +441,8 @@ local function buildBoard()
 	foot.AnchorPoint = Vector2.new(0, 1)
 	foot.Position = UDim2.fromScale(0, 1)
 	foot.Size = UDim2.new(1, 0, 0, ts() + 4)
+	foot.TextStrokeTransparency = 0.4
+	foot.ZIndex = 3 -- above BoardBg (Tester WARN 1)
 	-- DG-RECORD (approved 2026-11-16 8:07 PM, rule 281): shown once endless is open (L10) or a stage 4+ was reached.
 	local deepest = tonumber(st and st.deepest) or 0
 	if deepest > 0 and ((tonumber(st and st.level) or 0) >= 10 or deepest > 3) then
@@ -344,6 +452,8 @@ local function buildBoard()
 		rec.Position = UDim2.fromScale(1, 1)
 		rec.Size = UDim2.new(0.4, 0, 0, ts() + 4)
 		rec.TextXAlignment = Enum.TextXAlignment.Right
+		rec.TextStrokeTransparency = 0.4
+		rec.ZIndex = 3 -- above BoardBg (Tester WARN 1)
 	end
 end
 
@@ -357,10 +467,18 @@ local function pickedCount(): number
 	return n
 end
 
+-- A unit card tap in the party pick: toggle it, up to the card's cap (also the Studio hook "unit:<id>").
+local function toggleUnit(id: string)
+	if picked[id] then picked[id] = nil
+	elseif pickedCount() < ((pickedCard and pickedCard.partyCap) or MAX_PARTY) then picked[id] = true end
+	render()
+end
+
 local function buildParty()
 	local c = ctx
 	if not c then return end
 	local main = screen.Main
+	makeBiomeBg(main, pickedCard and pickedCard.biome) -- chosen dungeon's biome art (Cave fallback), under the cards
 	local n = pickedCount()
 	local top = makeText(main, "Choose your party", body(), Theme.Colors.TextGold, true) -- DG-PARTY-TITLE
 	top.Size = UDim2.new(0.6, 0, 0, body() + 4)
@@ -387,58 +505,51 @@ local function buildParty()
 	grid.ScrollingDirection = Enum.ScrollingDirection.Y
 	grid.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	grid.CanvasSize = UDim2.new()
+	grid.ZIndex = 2 -- unit cards above the biome background
+	top.ZIndex = 3; cnt.ZIndex = 3; hint.ZIndex = 3; hint2.ZIndex = 3
+	top.TextStrokeTransparency = 0.4; hint.TextStrokeTransparency = 0.4; hint2.TextStrokeTransparency = 0.4
+	-- 2026-11-22 user: the approved unit portrait card (UnitsScreen.MakeCard: portrait + unit frame, Lv
+	-- badge, name, HP / MP bars, white selected glow, dimmed AWAY / "Exploring a dungeon"), 3 per row.
+	local gpad = Instance.new("UIPadding")
+	gpad.PaddingLeft = UDim.new(0, 4)  -- the selected glow reaches 6 px outside the card
+	gpad.PaddingTop = UDim.new(0, 4)
+	gpad.PaddingRight = UDim.new(0, 8) -- + scroll bar
+	gpad.PaddingBottom = UDim.new(0, 4)
+	gpad.Parent = grid
+	local cardH = if UnitsCard then UnitsCard.CardHeight() else NODE_H + 4
 	local layout = Instance.new("UIGridLayout")
-	layout.CellSize = UDim2.new(1 / 3, -6, 0, NODE_H + 4)
-	layout.CellPadding = UDim2.fromOffset(4, 4)
+	layout.CellSize = UDim2.new(1 / 3, -6, 0, math.max(NODE_H, cardH)) -- >= 44 px tap target
+	layout.CellPadding = UDim2.fromOffset(6, 6)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = grid
 	if not partyUnits then partyUnits = c.getUnits() end
 	local res = partyUnits
 	for i, u in (res and res.units) or {} do
 		local on = picked[u.id] == true
-		local b = Instance.new("TextButton")
-		b.Name = "Unit_" .. tostring(u.id)
-		b.Text = ""
-		b.AutoButtonColor = false
-		b.BackgroundColor3 = if on then Theme.Colors.SelectedItem else Theme.Colors.Surface
-		b.BackgroundTransparency = 0.2
-		b.BorderSizePixel = 0
-		b.LayoutOrder = i
-		corner(b)
-		if on then stroke(b, Theme.Colors.TextGold, 2) end
-		local nm = makeText(b, `{u.name or "?"}  Lv.{u.unitLevel or "?"}`, ts(), Theme.Colors.TextPrimary, true)
-		nm.TextWrapped = false
-		nm.TextTruncate = Enum.TextTruncate.AtEnd
-		nm.Size = UDim2.new(1, -10, 0, ts() + 2)
-		nm.Position = UDim2.fromOffset(5, 4)
-		local hp = makeText(b, `HP {u.hp or 0}/{u.maxHp or 0}`, ts(), Theme.Colors.TextSecondary)
-		hp.Font = Theme.Font.Mono
-		hp.Size = UDim2.new(1, -10, 0, ts() + 2)
-		hp.Position = UDim2.fromOffset(5, ts() + 8)
-		if u.away then
-			local dim = Instance.new("Frame")
-			dim.Size = UDim2.fromScale(1, 1)
-			dim.BackgroundColor3 = Color3.new(0, 0, 0)
-			dim.BackgroundTransparency = DIM
-			dim.BorderSizePixel = 0
-			dim.ZIndex = 5
-			corner(dim)
-			-- DG-AWAY-DUNGEON / DG-AWAY-DISPATCH (approved)
-			local tag = makeText(dim, if u.awayReason == "dungeon" then "Exploring a dungeon" else "AWAY", ts(), Theme.Colors.TextPrimary, true)
-			tag.TextXAlignment = Enum.TextXAlignment.Right
-			tag.TextYAlignment = Enum.TextYAlignment.Bottom
-			tag.Size = UDim2.new(1, -6, 1, -3)
-			tag.ZIndex = 6
-			dim.Parent = b
-		else
-			local id = u.id
-			b.Activated:Connect(function()
-				if picked[id] then picked[id] = nil
-				elseif pickedCount() < ((pickedCard and pickedCard.partyCap) or MAX_PARTY) then picked[id] = true end
-				render()
-			end)
+		local id = u.id
+		-- Away units: dimmed with the approved tag (DG-AWAY-DUNGEON / DG-AWAY-DISPATCH, drawn by the shared
+		-- card) and a tap does nothing (never the Units screen's default "open Loadout").
+		local onTap = if u.away then function() end else function() toggleUnit(id) end
+		if UnitsCard then
+			-- PT-15 (batch 8): red low-HP band on the portrait (persistent_hp_mp_rules 24).
+			UnitsCard.MakeCard(grid, u, i, { onTap = onTap, selected = on, lowHpMark = true })
+		else -- UnitsScreen missing: a plain name tile so the pick still works
+			local b = Instance.new("TextButton")
+			b.Name = "Unit_" .. tostring(u.id)
+			b.Text = ""
+			b.AutoButtonColor = false
+			b.BackgroundColor3 = if on then Theme.Colors.SelectedItem else Theme.Colors.Surface
+			b.BackgroundTransparency = if u.away then 0.7 else 0.2
+			b.BorderSizePixel = 0
+			b.LayoutOrder = i
+			corner(b)
+			if on then stroke(b, Theme.Colors.TextGold, 2) end
+			local nm = makeText(b, `{u.name or "?"}  Lv.{u.unitLevel or "?"}`, ts(), Theme.Colors.TextPrimary, true)
+			nm.Size = UDim2.new(1, -10, 1, 0)
+			nm.Position = UDim2.fromOffset(5, 0)
+			b.Activated:Connect(onTap)
+			b.Parent = grid
 		end
-		b.Parent = grid
 	end
 	grid.Parent = main
 end
@@ -880,6 +991,20 @@ function DungeonScreen.Init(c: Context)
 				if not isOpen then DungeonScreen.Open() task.wait(1) end
 				if v == "bag" then DungeonScreen.OpenBag() else DungeonScreen.OpenLoadout("GEARS") end
 			elseif string.sub(v, 1, 4) == "tap:" then BagPanel.Tap(string.sub(v, 5)) end
+			-- 2026-11-22: pre-launch views, same handlers as the taps: "card:<n>" (board card n),
+			-- "unit:<id>" (party pick; away units ignored like a tap), "partyback" (party -> board).
+			if string.sub(v, 1, 5) == "card:" and view == "board" then
+				local cc = st and st.choices and st.choices[tonumber(string.sub(v, 6)) or 0]
+				if cc and not cc.used then openParty(cc) end
+			elseif string.sub(v, 1, 5) == "unit:" and view == "party" then
+				local uid = string.sub(v, 6)
+				for _, u in (partyUnits and partyUnits.units) or {} do
+					if tostring(u.id) == uid and not u.away then toggleUnit(u.id) end
+				end
+			elseif v == "partyback" and view == "party" then
+				view = "board"
+				render()
+			end
 		end)
 	end
 end

@@ -570,9 +570,23 @@ function WeaponData.GetPassiveDesc(passiveId)
 end
 
 -- Player label for a weapon pattern key (weapons_equipment 165: "Line 3"). Unlisted keys show as-is.
-local PATTERN_LABEL = { ["Line2"] = "Line 2", ["Line3"] = "Line 3", ["ImpactSplash"] = "Impact Splash" }
+local PATTERN_LABEL = { ["Line2"] = "Line 2", ["Line3"] = "Line 3", ["ImpactSplash"] = "Impact Splash",
+	-- BUG-157 (HUNT-20, batch 12): skill aoePattern keys, approved labels (loadout_ui_spec 129).
+	["Line5"] = "Line 5", ["TileLine4"] = "Line 4", ["Chain3"] = "Chain 3", ["Chain4"] = "Chain 4",
+	["Circle1"] = "Circle 1", ["Circle2"] = "Circle 2", ["Circle3"] = "Circle 3", ["Cone2"] = "Cone 2",
+	["Cone3"] = "Cone 3", ["Cross2"] = "Cross 2", ["Cross3"] = "Cross 3", ["Aura3"] = "Aura 3",
+	["Ring1"] = "Ring 1", ["DiamondRing2"] = "Diamond Ring 2", ["Impact1"] = "Impact 1",
+	["Spread3x3"] = "Spread 3x3" }
 function WeaponData.GetPatternLabel(pattern)
 	return PATTERN_LABEL[pattern] or pattern
+end
+
+-- BUG-157: the shape label of a SKILL (turn prompt / skill popup). Same table as weapons; a weapon-shape
+-- skill (InheritWeapon) shows the equipped weapon's own label. No pattern -> "Single".
+function WeaponData.GetSkillPatternLabel(aoePattern, weaponPattern)
+	local p = if aoePattern == "InheritWeapon" then weaponPattern else aoePattern
+	if p == nil or p == "" then return "Single" end
+	return WeaponData.GetPatternLabel(p)
 end
 
 -- Player-facing name overrides for native passives whose key is not a good name

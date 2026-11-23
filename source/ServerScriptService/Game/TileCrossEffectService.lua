@@ -31,6 +31,16 @@ local GameConstants = require(
 
 local TileCrossEffectService = {}
 
+-- BUG-217 (batch 18, Tester pass 7): an AI dry-run push (DisplacementService.ResolvePushPreview) still printed
+-- "[TileCrossEffect] Hero entered (15,11) Ice" as if a unit had moved. While quiet, the two resolution prints
+-- below are skipped; the returned effects are unchanged. Set / restored only by ResolvePushPreview.
+local _quiet = false
+function TileCrossEffectService.SetQuiet(on: boolean): boolean
+	local prev = _quiet
+	_quiet = on == true
+	return prev
+end
+
 -- Optional: TileEffectService injected at runtime (DI) so a slide can continue
 -- across tiles whose ACTIVE tile effect is Oily / Ice / Frozen (slide-extension),
 -- not just Slippery BASE terrain. Wired in Main.server.lua during init.
@@ -149,7 +159,7 @@ function TileCrossEffectService.OnTileEntered(unit, tileX, tileY, entryDirection
 	-- and apply their cross effects via TILE_EFFECT_CROSS.
 	-- For now, this is a no-op.
 
-	if #effects > 0 then
+	if #effects > 0 and not _quiet then  -- BUG-217: silent during an AI dry-run push
 		local names = {}
 		for _, e in ipairs(effects) do
 			table.insert(names, e.type .. ":" .. (e.statusId or e.reason or "?"))
@@ -262,7 +272,7 @@ function TileCrossEffectService.ResolveSlide(unit, startX, startY, dx, dy, allUn
 		end
 	end
 
-	if tilesSlid > 0 then
+	if tilesSlid > 0 and not _quiet then  -- BUG-217: silent during an AI dry-run push
 		print(string.format(
 			"[TileCrossEffect] %s SLID %d tiles to (%d,%d) | StoppedBy: %s",
 			unit.name, tilesSlid, currentX, currentY, stoppedBy or "max"

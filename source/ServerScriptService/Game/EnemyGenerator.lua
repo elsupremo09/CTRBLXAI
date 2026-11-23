@@ -11,7 +11,8 @@
 --          3-5 gear pieces incl. weapon, gear rarity Common..Rare, base RT 400.
 --   Elite: doctrine skill + 3 pool skills (4 total), 1 augment each (2nd via Training Grounds, 2026-11-04), full consumables,
 --          full gear set, gear rarity Uncommon..Epic, base RT 350.
---   Boss:  authored separately (NOT handled here).
+--   Boss:  Elite build clone with base RT GameConstants.BASE_RT_BOSS (BUG-123 / BUG-131, see BOSS_BUILD);
+--          AP per turn from GameConstants.GetTurnAp. No DB boss build yet (open_decisions 56).
 --   Stats: from race + level only (no tier multiplier). Race is fully random
 --          (biome->race mapping parked). Deterministic: same rng stream = same enemies.
 --
@@ -225,13 +226,26 @@ local TIER_BUILD = {
 		consumableMax = 2,
 	},
 }
+-- BUG-123 (BUG-HUNT-23, 2026-11-22): Boss quests / Boss rooms "contain a boss enemy"
+-- (unit_progression 72) but Boss roster entries were skipped here, so a Boss room was all
+-- Grunts. DB: Boss unit Base RT 300, AP 3 per turn (core_stats 13; AP in GameConstants.GetTurnAp).
+-- The DB has no boss build (skills / gear / consumables; open_decisions 56 open), so the boss
+-- uses the ELITE build (agent default, recorded in DEV_batch9_20261122.md).
+-- BUG-131 (2026-11-22, Tester UAT batch 9): a clone of Elite (no copied block) and the Base RT from
+-- GameConstants.BASE_RT_BOSS (DAT-001: one source for the number).
+local BOSS_BUILD = table.clone(TIER_BUILD.Elite)
+BOSS_BUILD.baseRt = GameConstants.BASE_RT_BOSS
+BOSS_BUILD.aiRole = "Boss"
+local tierBuildAny: any = TIER_BUILD -- --!strict: the literal table type has no Boss key
+tierBuildAny.Boss = BOSS_BUILD
 
 -- Map a quest enemyTypes "type" string to a TIER_BUILD key.
 local TYPE_TO_TIER = {
 	Grunt   = "Grunt",
 	Veteran = "Veteran",
 	Elite   = "Elite",
-	-- Boss intentionally omitted: authored elsewhere.
+	-- BUG-123: Boss was omitted ("authored elsewhere"), but nothing else ever built it.
+	Boss    = "Boss",
 }
 
 --------------------------------------------------
@@ -507,6 +521,8 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 	unit.selectedDoctrineSkill = doctrineSkill
 	-- Tier tag for client display (silver-star Veteran / gold-star Elite name prefix).
 	unit.enemyType = spec.type
+	-- BUG-123: the flag the Boss HP% Modifier / unpushable / boss-relic checks also read.
+	if spec.type == "Boss" then unit.isBoss = true end
 	-- Perks & Flaws Phase 1: roll 1 perk + 1 flaw at spawn (data only, no gameplay
 	-- effect yet). AssignIfEmpty guards re-roll; recruited enemies retain these.
 	TraitRoller.AssignIfEmpty(unit, rng)
@@ -643,6 +659,12 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 	-- (before armor/doctrine), and RebuildUnitStats raised maxHp but only clamps
 	-- currentHp DOWN — leaving a freshly generated enemy below full. Top it up.
 	-- (MP intentionally left as-is per design: enemies may spawn under full MP.)
+	-- BUG-155 (batch 12, core_stats 55): Boss Max HP = this build's Max HP x BOSS_RULES.hpMult. Kept as a
+	-- battle-only Max HP bonus so every later stat rebuild reads it back (adds to other battle HP bonuses).
+	if unit.isBoss and EquipmentService.RebuildUnitStats then
+		unit.battleMaxHpBonusPct = (tonumber(unit.battleMaxHpBonusPct) or 0) + (GameConstants.BOSS_RULES.hpMult - 1)
+		EquipmentService.RebuildUnitStats(unit)
+	end
 	unit.currentHp = unit.maxHp
 
 	-- 9. LUK Starting RT — DB core_stats id 54 STEP 1 (symmetric with players):
@@ -673,7 +695,7 @@ end
 --- @param enemyTypes table  list of { type, level, count }
 --- @param enemySpawns table list of { x, y } (from generatedMap.deploymentZones.enemy)
 --- @param rng Random        deterministic stream (e.g. seedCtx.enemyRng)
---- @return {any}            list of created enemy units (Boss entries skipped)
+--- @return {any}            list of created enemy units (Boss entries included since BUG-123)
 function EnemyGenerator.GenerateEnemies(enemyTypes: {any}, enemySpawns: {any}, rng: Random): {any}
 	local units = {}
 	local spawnIdx = 1
@@ -684,8 +706,20 @@ function EnemyGenerator.GenerateEnemies(enemyTypes: {any}, enemySpawns: {any}, r
 	for _, entry in ipairs(enemyTypes) do
 		local count = entry.count or 1
 		for _ = 1, count do
-			local spawn = enemySpawns[spawnIdx] or enemySpawns[#enemySpawns] or { x = 1, y = 1 }
-			local unit = EnemyGenerator.GenerateEnemy(
+			-- BUG-133 (2026-11-22, Tester UAT batch 9 / BUG-124 WARN): a short enemy zone used to stack every
+			-- extra enemy on the LAST spawn tile. Now an extra enemy spills to the nearest free tile around
+			-- that tile, via the shared spawn search (EnemyGenerator.FindNearestFreeSpawnTile: in bounds,
+			-- passable, no blocker, no living unit). No rng is passed, so the enemy rng stream is unchanged.
+			-- Never stacks: if the whole map is full the extra enemy is not created.
+			local spawn = enemySpawns[spawnIdx]
+			if not spawn then
+				local last = enemySpawns[#enemySpawns] or { x = 1, y = 1 }
+				spawn = EnemyGenerator.FindNearestFreeSpawnTile({ units = units }, last.x, last.y, nil)
+				if spawn then
+					print(string.format("[EnemyGenerator] Enemy zone full: spilled enemy %d to (%d,%d)", created + 1, spawn.x, spawn.y))
+				end
+			end
+			local unit = spawn and EnemyGenerator.GenerateEnemy(
 				{ type = entry.type, level = entry.level },
 				created + 1, spawn, rng, usedPortraits
 			)
@@ -768,8 +802,12 @@ function EnemyGenerator.SpawnReinforcement(spec, spawnTile, state, rng, side, ra
 	end
 
 	-- Side: Enemy by default; Neutral for friendly summons (Refugee Camp).
+	-- BUG-281 (batch 24): "Player" is passed only by the Studio dev Spawn command (an AI-run ally); it used to
+	-- come in as Neutral and be switched to Player after this print, so the line said side=Neutral.
 	if side == "Neutral" then
 		unit.side = "Neutral"
+	elseif side == "Player" then
+		unit.side = "Player"
 	else
 		unit.side = "Enemy"
 	end

@@ -19,6 +19,63 @@ GameConstants.AP_PER_TURN_STANDARD = 2
 GameConstants.BASE_RT_BOSS     = 300
 GameConstants.AP_PER_TURN_BOSS = 3
 
+-- BUG-131 (2026-11-22, Tester UAT batch 9): ONE rule for a unit's AP per turn (core_stats 13: Boss 3,
+-- everyone else 2) plus the RL-19 Berserker's Oath dungeon bonus (_dgApBonus). Used by both
+-- BattleCoordinator turn-start sites and by the TurnStarted broadcast (max AP shown on the enemy-turn
+-- panel), so the shown max can never differ from the AP the unit gets (DAT-001).
+function GameConstants.GetTurnAp(unit: any): number
+	local base = if unit and unit.isBoss then GameConstants.AP_PER_TURN_BOSS else GameConstants.AP_PER_TURN_STANDARD
+	return base + (tonumber(unit and unit._dgApBonus) or 0)
+end
+
+-- BOSS RULES (batch 12, 2026-11-22, DESIGNER under the user's "accept all" order). DB: core_stats 38-47
+-- (Boss Rules) + core_stats 55 (Boss build & Max HP) + open_decisions 56. ONE table for every boss
+-- number (DAT-001); GetBossMod returns 1 for any unit that is not a boss.
+GameConstants.BOSS_RULES = table.freeze({
+	hpMult              = 2.0,   -- core_stats 55: Boss Max HP = Elite-build Max HP x 2 (rounded) (SIM_boss_hp_20261122, BUG-165)
+	debuffDuration      = 0.5,   -- core_stats 39: debuff duration x0.5, then ceil()
+	hardControlDuration = 0.2,   -- core_stats 43: hard control (blocks All / skips turn) x0.2, then ceil()
+	hpPctDebuff         = 0.25,  -- core_stats 40: HP%-based debuff damage x0.25 (Poison, Venom, Bleed, Raptured, Wounded)
+	hpPctEnvironmental  = 0.25,  -- core_stats 41: HP%-based environmental damage x0.25 (fall, wall/unit collision, Bone Pillar extra)
+	rtDelay             = 0.5,   -- core_stats 42: RT delay inflicted on a boss x0.5 (DESIGNER batch 12b: top of the 25-50% range, every source)
+	petrifyCt           = 300,   -- core_stats 44: Petrify on a boss lasts 300 CT
+	phaseThresholds     = table.freeze({ 0.70, 0.40, 0.10 }), -- core_stats 45: HP fraction left
+	phaseBreakDebuff    = 0.5,   -- core_stats 46: active debuff durations x0.5 on a Phase Break
+	phaseBreakMinTurns  = 1,     -- core_stats 46: below 1 full turn left -> removed
+	phaseBreakMinCt     = 300,   -- core_stats 46: below 300 CT left -> removed
+})
+
+function GameConstants.IsBoss(unit: any): boolean
+	return type(unit) == "table" and (unit.isBoss == true or unit.enemyType == "Boss")
+end
+
+-- kind = a BOSS_RULES key ("debuffDuration", "hardControlDuration", "hpPctDebuff", ...). 1 when not a boss.
+function GameConstants.GetBossMod(unit: any, kind: string): number
+	if not GameConstants.IsBoss(unit) then return 1 end
+	local v = GameConstants.BOSS_RULES[kind]
+	return if type(v) == "number" then v else 1
+end
+
+-- BUG-158 (batch 12b, core_stats 42): RT delay that lands on `unit` after its own resistances. A boss
+-- takes x BOSS_RULES.rtDelay (rounded); anyone else and any delay <= 0 is unchanged. Used by every flat
+-- RT-delay source; CalcRtDelayResistance applies the same factor when given the target unit.
+function GameConstants.ApplyBossRtDelay(unit: any, delay: number): number
+	if not GameConstants.IsBoss(unit) or (tonumber(delay) or 0) <= 0 then return delay end
+	return math.round(delay * GameConstants.BOSS_RULES.rtDelay)
+end
+
+-- BUG-154 (batch 12): short player text for a refused battle command. The server sends only the code
+-- (PlayerTurnPrompt.rej, CommandService.ClassifyReject); the client shows the text in the existing
+-- disabled-reason tooltip. Approved 2026-11-22 (loadout_ui_spec 131).
+GameConstants.REJECT_TEXT = table.freeze({
+	sil  = "Silenced: can't use skills.",
+	blk  = "A status blocks that action.",
+	ap   = "Not enough AP",
+	mp   = "Not enough MP",
+	tile = "That tile can't be used.",
+	tgt  = "Not a valid target.",
+})
+
 GameConstants.REST_RT_MULTIPLIER = 0.75
 
 -- Base Jump (DB core_stats "1 + floor(DEX / 60)"): the constant term of the Jump
@@ -2075,6 +2132,10 @@ GameConstants.SKILLS = {
 		rtMult        = 1.5,
 		channelTime   = 100,
 		power         = 1.1,
+		-- BUG-256 (batch 21, Studio pass 11): DB skills SKL-CRUSHING-ADVANCE "Apply authored Knockback based on Force."
+		-- The entry had no knockback field, so the skill never pushed. +0 = the caster's own Force (Overwhelming Blow is
+		-- +1 per its DB row); CommandService applySkillPostHit, after a hit that did HP damage.
+		knockbackOnHit = 0,
 		inheritStr    = true,
 		appliesStatus = nil,
 		isHealing     = false,
@@ -3684,11 +3745,13 @@ function GameConstants.CalcRtDelayBonus(weaponRtDelay, str)
 	return weaponRtDelay * (1 + math.min(str / (200 + str), 0.75))
 end
 
-function GameConstants.CalcRtDelayResistance(rawDelay, targetVit, gearResistMult)
+-- targetUnit (optional, BUG-158 batch 12b): the unit receiving the delay; a boss takes x BOSS_RULES.rtDelay
+-- (core_stats 42) in the same rounding. nil = unchanged (old 3-argument callers, client estimates).
+function GameConstants.CalcRtDelayResistance(rawDelay, targetVit, gearResistMult, targetUnit)
 	targetVit = targetVit or 10
 	local resist = 1 - targetVit / (300 + targetVit)
 	local gm = gearResistMult or 1
-	return math.round(rawDelay * resist * gm)
+	return math.round(rawDelay * resist * gm * GameConstants.GetBossMod(targetUnit, "rtDelay"))
 end
 
 --------------------------------------------------
@@ -3953,9 +4016,11 @@ GameConstants.KNOCKBACK_SOURCE_MODIFIERS = {
 
 GameConstants.FALL_DAMAGE_MIN_HEIGHT = 3 -- forced drops below this cause no fall damage
 
-function GameConstants.CalcWallCollisionDamage(targetMaxHp, blockedTiles, attackerStr, collisionType, sourceModifier)
+-- targetUnit (optional, BUG-160 batch 12b): the unit taking the impact; a boss takes x
+-- BOSS_RULES.hpPctEnvironmental (core_stats 41). nil = 1 (unchanged).
+function GameConstants.CalcWallCollisionDamage(targetMaxHp, blockedTiles, attackerStr, collisionType, sourceModifier, targetUnit)
 	local collisionMult = GameConstants.COLLISION_MULTIPLIERS[collisionType] or 1.0
-	local bossMod = 1.0 -- Boss HP% modifier stub — no bosses in Slice 2
+	local bossMod = GameConstants.GetBossMod(targetUnit, "hpPctEnvironmental") -- Boss HP% Modifier (core_stats 41)
 	return math.round(targetMaxHp * 0.04 * blockedTiles * (1 + attackerStr / 200) * collisionMult * bossMod * sourceModifier)
 end
 
@@ -3979,9 +4044,11 @@ function GameConstants.CapUnitDamage(unit, amount)
 	return amount
 end
 
-function GameConstants.CalcFallDamage(targetMaxHp, fallHeight)
+-- targetUnit (optional, BUG-160 batch 12b): the falling unit; a boss takes x BOSS_RULES.hpPctEnvironmental
+-- (core_stats 41). nil = unchanged.
+function GameConstants.CalcFallDamage(targetMaxHp, fallHeight, targetUnit)
 	if fallHeight < GameConstants.FALL_DAMAGE_MIN_HEIGHT then return 0 end
-	return math.round(targetMaxHp * 0.04 * (fallHeight - 2) ^ 1.5)
+	return math.round(targetMaxHp * 0.04 * (fallHeight - 2) ^ 1.5 * GameConstants.GetBossMod(targetUnit, "hpPctEnvironmental"))
 end
 
 -- Stat metadata for client UI breakdown (formula strings + parent stat)

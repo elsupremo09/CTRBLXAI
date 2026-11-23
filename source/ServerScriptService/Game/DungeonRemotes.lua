@@ -90,6 +90,8 @@ local SHOWN = table.freeze({
 	-- Step 3 (loadout in the dungeon, map consumables): SB-22 / SB-24, approved 2026-11-15 9:09 PM.
 	["Locked in the dungeon."] = true, -- SB-22
 	["Only usable in battle."] = true, -- SB-24
+	-- BUG-153 (HUNT-17): map UseItem on a non-Bag item, approved 2026-11-22 (loadout_ui_spec 130).
+	["Only items in the Bag can be used here."] = true,
 })
 
 local _playerId: string = "player_1"

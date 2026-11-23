@@ -635,15 +635,19 @@ end
 -- BLEED FAMILY (2026-10-28): Raptured and Wounded showed as statuses but never dealt damage.
 -- DB elements_statuses 55/56: Raptured = round(Max HP x 0.02 x Debuff Resistance) per tile entered
 -- by movement or displacement (not teleport / blink / swap); Wounded = round(Max HP x 0.15 x Debuff
--- Resistance) on an AP-spending action except Move, Guard, Wait/Rest. The Boss HP% modifier in the
--- DB formula has no system yet (Poison does not use it either). Damage is applied directly, so it
+-- Resistance) on an AP-spending action except Move, Guard, Wait/Rest. Boss HP% Modifier x0.25 (BUG-159,
+-- core_stats 40, GameConstants.BOSS_RULES.hpPctDebuff). Damage is applied directly, so it
 -- triggers no reactions. Returns the damage dealt.
-local function applyBleedFamilyDamage(u: any, statusId: string, frac: number, times: number): number
+-- entryLines (optional, BUG-211 batch 17b): the push's after-push list (applyForcedEntryEffects, BUG-207). The
+-- damage gets its own "<status> hit <unit> for N." line on that list, logged right after the push line, and no
+-- HP diff (which, inside a held hit, credited the hit's own damage to Raptured). Clients get HP via StatusSync.
+local function applyBleedFamilyDamage(u: any, statusId: string, frac: number, times: number, entryLines: any?): number
 	if not (u and u.isAlive) or (times or 0) <= 0 then return 0 end
 	local inst = StatusService.HasStatus(u, statusId)
 	if not inst then return 0 end
 	local per = (u.maxHp or 1) * frac * StatusService.GetDebuffResist(u)
 		* TraitEffectService.GetDotDamageReceivedModifier(u, statusId)
+		* GameConstants.GetBossMod(u, "hpPctDebuff") -- BUG-159: Boss HP% Modifier x0.25 (core_stats 40)
 	local dmg = math.max(1, math.round(per * times))
 	local dealt = UnitSchema.ApplyDamage(u, dmg, statusId)
 	print(string.format("[CommandService] %s: %s takes %d (x%d) | HP: %d/%d", statusId, u.name, dmg, times,
@@ -652,7 +656,14 @@ local function applyBleedFamilyDamage(u: any, statusId: string, frac: number, ti
 		u._killedBy = u._killedBy or inst.sourceUnitId
 		u._killCause = u._killCause or statusId
 	end
-	BattleVisualBroadcaster.UnitStateChanged(u, statusId)
+	if type(entryLines) == "table" then
+		-- BUG-212 (batch 17c, Tester F1 on BUG-211): hpLoss lets UnitPushed count this damage in its HP / KO sync.
+		table.insert(entryLines, { text = `{statusId} hit {u.name or "?"} for {dealt or dmg} ({times} tile{if times == 1 then "" else "s"} dragged).`, unitId = u.id,
+			hpLoss = dealt or dmg })
+		BattleVisualBroadcaster.StatusSync(u)
+	else
+		BattleVisualBroadcaster.UnitStateChanged(u, statusId)
+	end
 	return dealt or dmg
 end
 
@@ -706,15 +717,30 @@ local function trapfinderRider(state: any, actor: any)
 	end
 end
 
-local function applyForcedEntryEffects(target: any, result: any)
+-- logWithPush (optional, BUG-207 batch 17): the caller sends BattleVisualBroadcaster.UnitPushed for this result
+-- right after, so the entry status lines are collected on result.entryLines and logged right after the push line.
+local function applyForcedEntryEffects(target: any, result: any, logWithPush: boolean?)
+	local _entryLines = nil
+	if logWithPush and type(result) == "table" then
+		result.entryLines = result.entryLines or {}
+		_entryLines = result.entryLines
+	end
 	-- Bone Pillar (objects_encounters row 121, 2026-11-07): a unit that collided with one gets Bleed
 	-- after the collision damage (DisplacementService flags it). Runs even when the unit did not
 	-- move (pushed straight into an adjacent pillar). StatusService applies immunity (Undead).
 	if target and target.isAlive and result and result.wallCollision and result.wallCollision.bonePillar
 		and (result.wallCollision.damage or 0) > 0 and StatusService then
+		local _bpHad = StatusService.HasStatus(target, "Bleed")
 		local _bpOk = StatusService.ApplyStatus(target, "Bleed", "Bone Pillar")
-		if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
-			BattleVisualBroadcaster.UnitStateChanged(target, "Bone Pillar")
+		-- BUG-207 (batch 17): was a caused UnitStateChanged, whose HP diff inside a held hit logged the hit's and the
+		-- collision's HP loss as "Bone Pillar hit X for N." before the hit line. Now the status line only, after
+		-- the push line (the push line already shows the collision damage).
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.EntryStatus then
+			if _bpOk and not _bpHad and StatusService.HasStatus(target, "Bleed") then
+				BattleVisualBroadcaster.EntryStatus(target, "Bleed", "Bone Pillar", _entryLines)
+			else
+				BattleVisualBroadcaster.StatusSync(target)
+			end
 		end
 		print(string.format("[CommandService] Bone Pillar collision: %s -> Bleed%s", tostring(target.name),
 			_bpOk and "" or " (not applied / immune)"))
@@ -723,7 +749,7 @@ local function applyForcedEntryEffects(target: any, result: any)
 	-- Raptured: each tile a push / knockback / pull drags the unit through (landings from teleports,
 	-- blinks and swaps pass no tile count, so they deal none).
 	if (result.tilesDisplaced or 0) > 0 then
-		applyBleedFamilyDamage(target, "Raptured", 0.02, result.tilesDisplaced)
+		applyBleedFamilyDamage(target, "Raptured", 0.02, result.tilesDisplaced, _entryLines)  -- BUG-211: own line after the push line
 		if not target.isAlive then return end
 	end
 	local fx, fy = target.tileX, target.tileY
@@ -735,14 +761,81 @@ local function applyForcedEntryEffects(target: any, result: any)
 			trig = nil
 		end
 		if trig == "Drowning" or trig == "Sinking" then
+			local _trigHad = StatusService.HasStatus(target, trig)
 			local applied = StatusService.ApplyStatus(target, trig, "terrain")
 			print(string.format("[CommandService] Forced entry: %s pushed onto %s at (%d,%d) -> %s%s",
 				target.name, terrainData.id, fx, fy, trig, applied and "" or " (not applied / immune)"))
+			-- BUG-209 (batch 17, Studio pass 6): a push onto Deep Water applied Drowning with no log line at all
+			-- (only "Hero pushes Ranger 1 tile"). Now "<unit> is now Drowning (Deep Water)." after the push line;
+			-- Quicksand -> Sinking the same way. Not logged when the unit already had it (refresh).
+			if applied and not _trigHad and StatusService.HasStatus(target, trig) and BattleVisualBroadcaster.EntryStatus then
+				BattleVisualBroadcaster.EntryStatus(target, trig, terrainData.id or "terrain", _entryLines)
+			end
 		end
 	end
 	if _tileEffectService and _tileEffectService.OnUnitEntersTile then
-		_tileEffectService.OnUnitEntersTile(target, fx, fy)
+		_tileEffectService.OnUnitEntersTile(target, fx, fy, _entryLines)  -- BUG-207: tile status line after the push line
 	end
+end
+
+-- BUG-247 (batch 20b): every trap spring in this file goes through here. A trap that takes the unit to 0 HP
+-- (Spike Trap writes HP directly) left it isAlive = true outside the push loop: walking (Move), a skill landing
+-- or self-step, and item teleport / swap / rescue landings. A 0-HP unit now goes through UnitSchema.Kill (the
+-- normal KO path; god mode still keeps it at 1 HP) and the client is told it is dead. Returns TriggerTrap's result.
+-- BUG-248 (batch 20c, Tester W1): a skill-placed trap that KOs a unit credits its caster (trap.casterId).
+-- BUG-249 (batch 20c, Tester W2): koLineFromPush = true only from triggerCrossedTraps (a push), where UnitPushed
+-- fixes the log snapshot and queues the KO line. Every other caller (walk, skill landing, item landing) gets a
+-- SyncUnit after the KO, so the battle log does not later report a late or uncaused "is knocked out." line.
+-- BUG-255 (batch 21, Studio pass 11): a unit with Flight does not spring a step-on trap, on every path (walk, self-step,
+-- push / knockback / chain / Shockwave, skill or item landing). Walking and the skill self-step already skipped traps
+-- for Flight; a pushed flyer still set off a ground Spike Trap. DB: no row says flyers trigger ground traps; Flight
+-- "ignores ... tile bonuses/penalties" (elements_statuses 83) [agent default, vetoable].
+-- BUG-253 (batch 21): on a push (koLineFromPush) the trap's own battle-log line is kept (tr.lines) so the push caller
+-- logs it right AFTER its push line, and the HP the trap took is noted on unit._forcedTrapLoss so the hit line of the
+-- skill / attack that caused the push shows only its own damage (BattleTurnController subtracts it).
+-- BUG-254 (batch 21): on a push the trap line no longer says "<unit> was defeated." (UnitPushed writes the one
+-- "<unit> is knocked out." line).
+local function springTrap(unit: any, trap: any, state: any, koLineFromPush: any): any
+	if StatusService.HasStatus(unit, "Flight") then
+		print(string.format("[CommandService] Flight: %s passes over %s at (%s,%s) (not sprung)", tostring(unit.name),
+			tostring(trap and trap.type), tostring(trap and trap.x), tostring(trap and trap.y)))
+		return { fired = false }
+	end
+	local _hpPre = unit.currentHp or 0
+	local _wasAlive = unit.isAlive ~= false
+	local tr
+	if koLineFromPush then
+		local _lines = {}
+		local _prev = BattleVisualBroadcaster.CollectLines(_lines)
+		local _ok, _res = pcall(ObjectEffectService.TriggerTrap, unit, trap, state, state.units, { noKoText = true })
+		BattleVisualBroadcaster.EndCollectLines(_prev)
+		if not _ok then error(_res, 0) end
+		tr = _res
+		if type(tr) == "table" then tr.lines = _lines end
+		local _lost = math.max(0, _hpPre - (unit.currentHp or 0))
+		if _lost > 0 then unit._forcedTrapLoss = (unit._forcedTrapLoss or 0) + _lost end
+		if type(tr) == "table" then tr.hpLost = _lost end  -- BUG-259 (batch 21b, Tester W1): caller stores it on the push result
+	else
+		tr = ObjectEffectService.TriggerTrap(unit, trap, state, state.units)
+	end
+	if type(tr) == "table" and tr.fired and unit.isAlive and (unit.currentHp or 0) <= 0 then
+		unit._killCause = unit._killCause or "trap"
+		unit._killedBy = unit._killedBy or trap.casterId  -- BUG-248: skill-placed trap credits its caster
+		UnitSchema.Kill(unit)  -- BUG-242/247: same KO as every other damage path
+		BattleVisualBroadcaster.StatusSync(unit)  -- client gets isAlive = false now (no log line)
+		if not koLineFromPush then BattleVisualBroadcaster.SyncUnit(unit) end  -- BUG-249: log snapshot sees the KO
+	elseif type(tr) == "table" and tr.fired and _wasAlive and unit.isAlive == false then
+		-- BUG-258 (batch 21b, Tester F1 side note): a Land Mine (explosive trap) kills inside TriggerTrap, so the block
+		-- above was skipped and no kill cause / credit was set. Record them the same way; on a push,
+		-- stopPushAtTrapKo then credits the pusher when the trap has no caster (BUG-248).
+		unit._killCause = unit._killCause or "trap"
+		unit._killedBy = unit._killedBy or trap.casterId
+	end
+	-- BUG-266 (batch 21c, Tester W2): recompute after Kill; with god mode / KO protection Kill puts HP back to 1.
+	if koLineFromPush and type(tr) == "table" and tr.hpLost then
+		tr.hpLost = math.min(tr.hpLost, math.max(0, _hpPre - (unit.currentHp or 0)))
+	end
+	return tr
 end
 
 -- SKILL LANDING (DB project_rules 181): a unit that lands on a tile through a skill (Dragon Dive,
@@ -758,7 +851,7 @@ local function applyLandingEntry(u: any, state: any)
 	if ObjectEffectService and ObjectEffectService.GetTriggeredTrapAt then
 		local trap = ObjectEffectService.GetTriggeredTrapAt(state, u.tileX, u.tileY)
 		if trap then
-			ObjectEffectService.TriggerTrap(u, trap, state, state.units)
+			springTrap(u, trap, state)  -- BUG-247: a trap KO here is a real KO
 		end
 	end
 	if u.isAlive then
@@ -863,6 +956,93 @@ local function resolveReactions(order: any, attacker: any, state: any)
 	end
 end
 
+-- BUG-233 (batch 19, user decision): the forced-movement trap loop, as one helper. Springs every step-on trap on
+-- the tiles the unit was dragged across; a KO stops it.
+-- BUG-236 (batch 19b, user decision): moved up here so knockback and the Push action use it too (they ran their
+-- own loop with no KO stop, so a unit a trap KO'd kept springing traps further along). Chain push uses it as before.
+-- BUG-241/242 (batch 20, Studio pass 10): a trap that takes the unit to 0 HP (Spike Trap writes HP directly) left it
+-- isAlive = true, so the loop went on to the next trap and the unit stayed "alive" at 0 HP (chain push: it took turns).
+-- Now a 0-HP unit goes through UnitSchema.Kill (the normal KO path; god mode still keeps it at 1 HP) and the loop stops.
+-- Returns nil, or { killed = true, x, y, index } = the tile the trap KO'd it on (index = its place in tilesPath).
+-- BUG-253 (batch 21): pushResult (the push result the caller later sends to UnitPushed) gets the trap lines on
+-- pushResult.entryLines, so each trap line is logged right after that push line.
+local function triggerCrossedTraps(state: any, unit: any, tilesPath: any, pushResult: any)
+	if not (ObjectEffectService and ObjectEffectService.GetTriggeredTrapAt) then return nil end
+	-- BUG-274 (batch 23, Studio pass 14): a 2-tile push crossed a Spike Trap (DB: persistent, re-springs on each crossing)
+	-- with no TRAP SPRUNG line and no reason. One print per forced move now lists each crossed tile and what happened.
+	local _trapNotes = {}
+	for i, tp in ipairs(tilesPath or {}) do
+		if not unit.isAlive then break end
+		local trap = ObjectEffectService.GetTriggeredTrapAt(state, tp.x, tp.y)
+		if not trap then
+			table.insert(_trapNotes, string.format("(%s,%s)=no trap", tostring(tp.x), tostring(tp.y)))
+		else
+			-- BUG-247: the 0-HP KO (BUG-242) now lives in springTrap, shared with every other trap path.
+			local tr = springTrap(unit, trap, state, true)  -- BUG-249: push path; UnitPushed writes the KO line
+			table.insert(_trapNotes, string.format("(%s,%s)=%s %s", tostring(tp.x), tostring(tp.y), tostring(trap.type),
+				if type(tr) == "table" and tr.fired then "fired" else "not fired (Flight, owner's side or refused)"))
+			-- BUG-259 (batch 21b, Tester W1): the push line shows the HP from before the trap (the trap line follows it).
+			if type(tr) == "table" and type(pushResult) == "table" and (tr.hpLost or 0) > 0 then
+				pushResult.trapHpLost = (pushResult.trapHpLost or 0) + tr.hpLost
+			end
+			if type(tr) == "table" and type(tr.lines) == "table" and #tr.lines > 0 then
+				if type(pushResult) == "table" then
+					pushResult.entryLines = pushResult.entryLines or {}
+					for _, l in ipairs(tr.lines) do table.insert(pushResult.entryLines, l) end
+				else
+					for _, l in ipairs(tr.lines) do BattleVisualBroadcaster.Log(l.category, l.text, l.unitId) end
+				end
+			end
+			if type(tr) == "table" and tr.fired and not unit.isAlive then
+				print(string.format("[CommandService] Forced-move trap check | %s | %s | stopped: KO", tostring(unit.name), table.concat(_trapNotes, ", ")))
+				return { killed = true, x = tp.x, y = tp.y, index = i }
+			end
+		end
+	end
+	-- BUG-278 (batch 23b, Tester W3): the check line printed on every forced move, even on maps with no traps.
+	-- It now prints only if the map holds at least one trap object (tag "Trap", or a Venus Man-Trap).
+	local _mapHasTrap = false
+	if #_trapNotes > 0 and type(state) == "table" and type(state.objects) == "table" then
+		for _, o in ipairs(state.objects) do
+			local def = o.type and ObjectData.Objects[o.type]
+			if o.type == "Venus Man-Trap" then _mapHasTrap = true; break end
+			if def and def.tags then
+				for _, t in ipairs(def.tags) do
+					if t == "Trap" then _mapHasTrap = true; break end
+				end
+				if _mapHasTrap then break end
+			end
+		end
+	end
+	if _mapHasTrap then
+		print(string.format("[CommandService] Forced-move trap check | %s | %s", tostring(unit.name), table.concat(_trapNotes, ", ")))
+	end
+	return nil
+end
+
+-- BUG-241 (batch 20, Studio pass 10): a forced move ends on the tile where a trap KO'd the unit. Its callers kept the
+-- full push result, so the KO'd unit slid on to the final tile, crossed further traps and took Raptured. This puts
+-- the unit on the KO tile and drops the rest of the push (later tiles, collision, chain transfer, fall damage).
+-- result.trapKo tells BattleVisualBroadcaster.UnitPushed to queue the "is knocked out." line after the push line.
+-- BUG-248 (batch 20c, Tester W1 ruling): a trap KO during a push credits the pusher (actor), like a collision or
+-- fall KO (BUG-227/237). _killCause stays "trap", so the Pusher objective still counts only push/collision/fall KOs.
+local function stopPushAtTrapKo(unit: any, result: any, ko: any, actor: any)
+	if not (unit and type(result) == "table" and type(ko) == "table" and ko.killed) then return end
+	if actor and unit.isAlive == false then unit._killedBy = unit._killedBy or actor.id end
+	unit.tileX, unit.tileY = ko.x, ko.y
+	if not (result.finalTileX == ko.x and result.finalTileY == ko.y) then
+		result.tilesDisplaced = ko.index  -- tiles really entered (a Throwing Gloves throw has one entry = the landing)
+	end
+	result.finalTileX, result.finalTileY = ko.x, ko.y
+	result.pushed = (result.tilesDisplaced or 0) > 0
+	result.wallCollision = nil
+	result.fallDamage = nil
+	result.blockedBy = nil
+	result.trapKo = true
+	print(string.format("[CommandService] Trap KO stops the push of %s at (%d,%d) | Moved:%d",
+		tostring(unit.name), ko.x, ko.y, result.tilesDisplaced or 0))
+end
+
 --------------------------------------------------
 -- SHARED POST-HIT EFFECTS (2026-10-07). One copy used by the INSTANT skill path,
 -- the CHANNEL/ACTIVATION (delayed) path and the Giant basic-attack knockback, so a
@@ -898,11 +1078,26 @@ local function applyKnockback(state: any, actor: any, target: any, force: number
 		and result.wallCollision ~= nil and result.wallCollision.collidedUnitId ~= nil
 	-- Knockback into an ADJACENT wall / pillar / other non-unit obstacle (2026-11-08, movement_targeting
 	-- 15-16): no tile moved, but it still collides like the Push action - normal wall-collision damage,
-	-- Bone Pillar +15% and Bleed included. A push blocked by a unit keeps the old behaviour.
+	-- Bone Pillar +15% and Bleed included. A push blocked at once by a unit: see BUG-288 below.
 	local _wallBlocked = (not _isPull) and result ~= nil and not result.pushed
 		and result.wallCollision ~= nil and result.wallCollision.collidedUnitId == nil
 		and (result.wallCollision.damage or 0) > 0
-	if result and (result.pushed or _pullBlocked or _wallBlocked) then
+	-- BUG-288 (batch 27, Studio pass 18): a knockback into an ADJACENT unit (0 tiles moved, BlockedBy:unit) was
+	-- skipped too: ResolvePush printed "WallDmg:6 (Unit) + CollidedDmg:4" but neither unit lost HP and no push line
+	-- was sent (Crushing Advance on Chaosborn next to the shielded Mage). DB weapons_equipment 100 / movement_targeting
+	-- 15-17 and the Push action: a knockback that slams into a unit collides like one into a wall, both units take
+	-- normal collision damage (x0.5 skill source, already in ResolvePush), shields absorb it as usual (ApplyDamage).
+	-- The unit stays on its own tile (a 0-tile block never moves it to a fallback tile).
+	local _unitBlocked = (not _isPull) and result ~= nil and not result.pushed
+		and (result.tilesDisplaced or 0) == 0
+		and result.wallCollision ~= nil and result.wallCollision.collidedUnitId ~= nil
+		and ((result.wallCollision.damage or 0) > 0 or (result.wallCollision.collidedUnitDamage or 0) > 0)
+	if _unitBlocked then
+		result.finalTileX, result.finalTileY = target.tileX, target.tileY
+		print(string.format("[CommandService] %s KNOCKBACK | %s -> %s blocked at once by a unit: collision applies (BUG-288)",
+			label, actor.name, target.name))
+	end
+	if result and (result.pushed or _pullBlocked or _wallBlocked or _unitBlocked) then
 		target.tileX = result.finalTileX
 		target.tileY = result.finalTileY
 		-- Forced-movement trap trigger (2026-10-20): a knockback that drags the
@@ -910,12 +1105,10 @@ local function applyKnockback(state: any, actor: any, target: any, force: number
 		-- (Pinned/Bleed/RT/direct damage) apply to the pushed unit; a Land Mine
 		-- detonates at its tile. Forced momentum does NOT stop early (only a KO ends
 		-- the unit). Walks the crossed-tile list ResolvePush now returns.
-		if ObjectEffectService and result.tilesPath then
-			for _, tp in ipairs(result.tilesPath) do
-				local trap = ObjectEffectService.GetTriggeredTrapAt(state, tp.x, tp.y)
-				if trap then ObjectEffectService.TriggerTrap(target, trap, state, state.units) end
-			end
-		end
+		-- BUG-236 (batch 19b): shared loop; it stops once the target is KO'd (same as chain push / Shockwave).
+		-- BUG-241 (batch 20): a trap KO ends the knockback on that tile (no later tiles, collision or fall).
+		local _trapKo = triggerCrossedTraps(state, target, result.tilesPath, result)  -- BUG-253
+		if _trapKo then stopPushAtTrapKo(target, result, _trapKo, actor) end
 		local knockDmg = 0
 		if result.wallCollision and result.wallCollision.damage > 0 then
 			knockDmg = knockDmg + result.wallCollision.damage
@@ -923,23 +1116,33 @@ local function applyKnockback(state: any, actor: any, target: any, force: number
 		if result.fallDamage and result.fallDamage > 0 then
 			knockDmg = knockDmg + result.fallDamage
 		end
+		-- BUG-232 (batch 19, Tester UAT batch 18c): start at 0 HP lost, so a target already KO'd here (a trap on the
+		-- crossed tiles) shows no raw collision / fall damage in the push line.
+		result.targetHpLost = 0
 		if knockDmg > 0 and target.isAlive then
+			local _hpPre = target.currentHp or 0
 			UnitSchema.ApplyDamage(target, knockDmg, "push")
+			-- BUG-215 (batch 18): the HP this unit really lost (a 1-HP unit loses 1, a shield takes the rest), so the
+			-- battle-log push line shows that instead of the raw collision / fall damage.
+			result.targetHpLost = math.max(0, _hpPre - (target.currentHp or 0))
 			-- Objective "Pusher": a push/collision/fall KO is credited to the pusher.
 			if not target.isAlive then target._killedBy = target._killedBy or actor.id end
 		end
 		-- applyForcedEntryEffects itself skips the landing-tile effects when the unit did not move
 		-- (a blocked pull did not enter a new tile); it is called every time so a Bone Pillar
 		-- collision without movement still applies Bleed (2026-11-07).
-		applyForcedEntryEffects(target, result)
+		applyForcedEntryEffects(target, result, true)  -- BUG-207: entry status lines go after the push line below
 		if result.wallCollision
 			and result.wallCollision.collidedUnitId
 			and result.wallCollision.collidedUnitDamage
 			and result.wallCollision.collidedUnitDamage > 0
 		then
+			result.wallCollision.collidedUnitHpLost = 0  -- BUG-222 (batch 18b, Tester W3): a dead collided unit shows no "-N HP"
 			for _, u in ipairs(state.units) do
 				if u.id == result.wallCollision.collidedUnitId and u.isAlive then
+					local _hpPre = u.currentHp or 0
 					UnitSchema.ApplyDamage(u, result.wallCollision.collidedUnitDamage, "push")
+					result.wallCollision.collidedUnitHpLost = math.max(0, _hpPre - (u.currentHp or 0))  -- BUG-215
 					if not u.isAlive then u._killedBy = u._killedBy or actor.id end
 					-- Visual only (2026-10-30): the push broadcast carries the struck unit's HP so the
 					-- client can show its HP bar / KO (a collision KO sent nothing before).
@@ -948,6 +1151,7 @@ local function applyKnockback(state: any, actor: any, target: any, force: number
 				end
 			end
 		end
+		result.isPull = _isPull  -- BUG-208 (batch 17): a blocked pull's collision line says "pulls"
 		BattleVisualBroadcaster.UnitPushed(actor, target, result, cause)  -- cause: battle-log label (item 8, 2026-11-08 11:52 PM)
 		LifeLinkService.CheckUnit(target)  -- a push can carry a linked unit past 6 tiles (2026-11-08)
 		print(string.format(
@@ -955,6 +1159,18 @@ local function applyKnockback(state: any, actor: any, target: any, force: number
 			label, actor.name, target.name, result.tilesDisplaced,
 			result.finalTileX, result.finalTileY, knockDmg
 		))
+	elseif result and (result.tilesDisplaced or 0) == 0 and type(result.resistReason) == "string" and result.resistReason ~= ""
+		and (GameConstants.IsBoss(target) or target._displacementImmune)
+		and (label == "SKILL" or label == "AUGMENT") then
+		-- BUG-250 (batch 20c, Tester W3): only skill / augment callers log this line (weapon, Giant, Kick Boots, items stay silent).
+		-- BUG-243 (batch 20, Studio pass 10): a skill / augment pull or knockback on a boss (or a Steadfast Strike unit)
+		-- was refused on the server with no battle-log line (Ignition Lance + Pulling Strike on a boss showed only the
+		-- hit). It now goes through the BUG-231 text path: "<user>'s pull on <boss> has no effect: <reason>."
+		-- Only these two refusals; a Stability-resisted knockback stays silent as before.
+		result.isPull = _isPull
+		BattleVisualBroadcaster.UnitPushed(actor, target, result, cause)
+		print(string.format("[CommandService] %s KNOCKBACK | %s -> %s | Moved:0 | Reason: %s",
+			label, actor.name, target.name, result.resistReason))
 	end
 	return result
 end
@@ -1063,14 +1279,16 @@ function CommandService.ProcessRescueBeacons(state: any): any
 				victim.tileX, victim.tileY = spot.x, spot.y
 				victim.isAlive = true
 				UnitSchema.ClearChannelState(victim)  -- never return holding a pre-death channel
-				victim._revivedThisBattle = true  -- same kill-credit rule as the Interact revive
+				UnitSchema.MarkRevived(victim)  -- same kill-credit rule as the Interact revive + revive counter (BUG-143)
 				local maxHp = victim.maxHp or 1
 				victim.currentHp = UnitSchema.ReviveHp(victim, def.rescueHpPct or 0.15)  -- revive traits apply (re-check 2026-10-29)
 				victim.remainingRt = def.rescueRt or 400
-				BattleVisualBroadcaster.UnitSpawned(victim)       -- re-create the token if it was removed
+				-- BUG-143: a re-created token is not a unit entering the battle (no "enters the battle" line).
+				BattleVisualBroadcaster.UnitSpawned(victim, { revive = true })  -- re-create the token if it was removed
 				BattleVisualBroadcaster.UnitMoved(victim)         -- move first, then state (same order as other revives)
 				BattleVisualBroadcaster.UnitStateChanged(victim)  -- client restores a greyed KO body
-				BattleVisualBroadcaster.Log("ko", `Rescue Beacon revives {victim.name} ({victim.currentHp}/{maxHp} HP).`, victim.id)
+				-- BUG-143: same text; held behind the hit that KO'd the unit when it happens inside a hit command.
+				BattleVisualBroadcaster.LogRevive(victim, `Rescue Beacon revives {victim.name} ({victim.currentHp}/{maxHp} HP).`)
 				ObjectEffectService.RemoveObjectInstance(state, inst)
 				if BattleVisualBroadcaster.ObjectChanged then
 					BattleVisualBroadcaster.ObjectChanged(inst.x, inst.y, { destroyed = true })
@@ -1207,8 +1425,9 @@ local function skillActualRtDelay(actor: any, target: any, skillDef: any, rtDela
 		return 0
 	end
 	local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
+	-- BUG-158: target passed so a boss takes x BOSS_RULES.rtDelay (core_stats 42); real hit and preview alike.
 	return math.max(0, GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit,
-		(target.gearDerived and target.gearDerived.rtDelayResist or 1)))
+		(target.gearDerived and target.gearDerived.rtDelayResist or 1), target))
 end
 
 -- AREA TURN DELAY SPLIT (USER RULING 2026-11-08 7:14 PM, exception to rule 252): a skill with
@@ -1805,7 +2024,94 @@ end
 -- damage: closest to the actor, tie-broken by lowest Euclidean² (straightest
 -- line). Returns {x,y} or nil (already adjacent / no legal tile).
 --------------------------------------------------
-function CommandService.ComputeChargeLanding(actor: any, target: any, state: any)
+-- BUG-120 (BUG-HUNT-25, 2026-11-22): true when a unit standing on (x, y) could WALK off it to at least
+-- one of the 8 neighbours under the normal walking rules (same as GetMoveCandidates: not a wall /
+-- object, not impassable terrain, rise <= Jump, drop <= Downward Jump = Jump + 2, movement_targeting
+-- rows 10 / 11; Flight ignores height). Map geometry only: units move, walls and heights do not.
+-- BUG-130 (2026-11-22, Tester UAT batch 9): also refuses chasm-floor neighbours (as ComputeDistanceField /
+-- selfStepTileOk) and a sealed diagonal (the shared TargetingService.IsDiagonalStepSealed, no unit list =
+-- map geometry only), so a landing whose only exit is one of those no longer counts as walkable-off.
+-- BUG-176 (batch 14): the neighbour walk rule above as ONE iterator. visit(nx, ny) returning true stops it
+-- and makes it return true. Used by the Move filter check (landingHasWalkExit) and by the landing rule
+-- (landingHasMoveOption) below, so both read the same step rule.
+local function anyWalkStep(actor: any, x: number, y: number, visit: (number, number) -> boolean): boolean
+	local upLimit, downLimit = TargetingService.GetWalkJumpLimits(actor)
+	local here = GameConstants.GetElevation(x, y)
+	for ny = y - 1, y + 1 do
+		for nx = x - 1, x + 1 do
+			if (nx ~= x or ny ~= y) and nx >= 1 and ny >= 1 and nx <= _mapWidth and ny <= _mapHeight
+				and not GameConstants.IsBlocked(nx, ny) and not GameConstants.IsImpassableTerrain(nx, ny)
+				and not (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(nx, ny))
+				and not TargetingService.IsDiagonalStepSealed(actor, {}, x, y, nx, ny) then
+				local rise = GameConstants.GetElevation(nx, ny) - here
+				if rise <= upLimit and -rise <= downLimit and visit(nx, ny) then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+local function landingHasWalkExit(actor: any, x: number, y: number): boolean
+	if StatusService.HasStatus(actor, "Flight") then return true end
+	return anyWalkStep(actor, x, y, function() return true end)
+end
+-- BUG-176 (batch 14): a leap / charge END tile must leave the unit at least one Move option. One step out
+-- is not enough: Skyfall Lance landed Bloodrage on (10,8), whose only walkable neighbour (11,8) is itself a
+-- dead end, so the Move filter (BUG-144, landingHasWalkExit) refused it and Bloodrage had 0 moves.
+-- True when some walkable neighbour passes the SAME check Move applies to a destination. Map geometry
+-- only, like the Move filter (units move; AP / Move range are not part of a tile's exits).
+local function landingHasMoveOption(actor: any, x: number, y: number): boolean
+	if StatusService.HasStatus(actor, "Flight") then return true end
+	return anyWalkStep(actor, x, y, function(nx: number, ny: number): boolean
+		return landingHasWalkExit(actor, nx, ny)
+	end)
+end
+-- BUG-184 (batch 15): the landing rule must also count the units standing around the landing tile. A forced
+-- Reckless Charge landed Bloodrage on (7,1), whose walkable neighbours were all taken by units, so it had 0
+-- Move options there. True when the unit, standing on (x, y), has a first step Move could take right now:
+-- a walkable neighbour (anyWalkStep, the BUG-176 step rule) that passes the Move filter (landingHasWalkExit)
+-- and has no other living unit on it, or holds a same-side unit (Move passes through allies) with such a
+-- free tile one step further. Diagonals sealed by enemy units are refused, as Move does. The caster's own
+-- current tile counts as free (it leaves it). Flight keeps its old pass. ComputeChargeLanding uses this for
+-- every caller (turn prompt, preview, AI, validation via CanLeapTo, commit), so all of them still agree.
+local function landingHasFreeMoveOption(actor: any, x: number, y: number, state: any): boolean
+	if StatusService.HasStatus(actor, "Flight") then return true end
+	local units = (state and state.units) or {}
+	local function occupantAt(tx: number, ty: number): any
+		for _, u in ipairs(units) do
+			if u ~= actor and u.isAlive and u.tileX == tx and u.tileY == ty then return u end
+		end
+		return nil
+	end
+	local function freeDestination(fx: number, fy: number, nx: number, ny: number): boolean
+		if nx == x and ny == y then return false end  -- the landing tile itself is not a move
+		if TargetingService.IsDiagonalStepSealed(actor, units, fx, fy, nx, ny) then return false end
+		return occupantAt(nx, ny) == nil and landingHasWalkExit(actor, nx, ny)
+	end
+	return anyWalkStep(actor, x, y, function(nx: number, ny: number): boolean
+		if TargetingService.IsDiagonalStepSealed(actor, units, x, y, nx, ny) then return false end
+		local occ = occupantAt(nx, ny)
+		if occ == nil then return landingHasWalkExit(actor, nx, ny) end
+		if occ.side ~= actor.side then return false end
+		return anyWalkStep(actor, nx, ny, function(mx: number, my: number): boolean
+			return freeDestination(nx, ny, mx, my)
+		end)
+	end)
+end
+-- BUG-144 (BUG-HUNT-05, 2026-11-22): the SAME helper, exported so TargetingService.GetMoveCandidates can refuse
+-- Move destinations the unit could not walk off (Main injects it: TargetingService.SetWalkExitCheck, ARC-004).
+function CommandService.LandingHasWalkExit(actor: any, x: number, y: number): boolean
+	return landingHasWalkExit(actor, x, y)
+end
+
+-- requireExit (BUG-120): only offer a landing tile the caster can walk off afterwards (Skyfall Lance:
+-- "must be valid landing tile"; the leap itself still ignores height limits, open_decisions 115).
+-- BUG-176 (batch 14): every END tile (leaps AND charges such as Reckless Charge, which previewed a landing on
+-- a dead end) must pass landingHasMoveOption, so the unit always has a Move option there. requireExit is
+-- kept for the callers' signature and no longer changes the rule. No tile passes = no move (as before
+-- when no tile was free).
+function CommandService.ComputeChargeLanding(actor: any, target: any, state: any, requireExit: boolean?)
 	if not (actor and target) then return nil end
 	local dist = math.max(math.abs(actor.tileX - target.tileX), math.abs(actor.tileY - target.tileY))
 	if dist <= 1 then return nil end  -- already adjacent; no move
@@ -1815,15 +2121,23 @@ function CommandService.ComputeChargeLanding(actor: any, target: any, state: any
 			if dx ~= 0 or dy ~= 0 then
 				local cx = target.tileX + dx
 				local cy = target.tileY + dy
+				-- BUG-285 (batch 26, Studio pass 17): the landing tile itself must be standable ground, as for Move
+				-- (ComputeDistanceField / GetMoveCandidates: a chasm floor is a hole in the walkable surface,
+				-- validation_matrix 18 "chasm tiles are not standable") and for Lunge / Recoil (selfStepTileOk).
+				-- Only its neighbours were checked, so a forced Reckless Charge landed on a chasm-floor tile.
+				-- Impassable terrain is refused for the same reason. Shared by CanLeapTo / LeapLanding / charges.
 				if cx >= 1 and cx <= _mapWidth and cy >= 1 and cy <= _mapHeight
-					and not GameConstants.IsBlocked(cx, cy) then
+					and not GameConstants.IsBlocked(cx, cy)
+					and not GameConstants.IsImpassableTerrain(cx, cy)
+					and not (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(cx, cy)) then
 					local occupied = false
 					if state and state.units then
 						for _, u in ipairs(state.units) do
 							if u.isAlive and u.tileX == cx and u.tileY == cy then occupied = true; break end
 						end
 					end
-					if not occupied then
+					-- BUG-176: one rule, leaps + charges. BUG-184 (batch 15): plus the units around the landing tile.
+					if not occupied and landingHasMoveOption(actor, cx, cy) and landingHasFreeMoveOption(actor, cx, cy, state) then
 						local dCheb = math.max(math.abs(actor.tileX - cx), math.abs(actor.tileY - cy))
 						local dSq = (actor.tileX - cx)^2 + (actor.tileY - cy)^2
 						if dCheb < bestDist or (dCheb == bestDist and dSq < bestDistSq) then
@@ -1844,14 +2158,15 @@ end
 --   CanLeapTo   -> already adjacent, or a free landing tile exists next to the target
 --   LeapLanding -> the tile the caster strikes from (nil = stays where it is, already adjacent)
 --   LeapDamageDef -> the skill with +20% damage when striking from higher tile elevation
+-- BUG-120: both pass requireExit, so a leap never lands on a tile the caster cannot walk off.
 function CommandService.LeapLanding(actor: any, target: any, state: any)
-	return CommandService.ComputeChargeLanding(actor, target, state)
+	return CommandService.ComputeChargeLanding(actor, target, state, true)
 end
 
 function CommandService.CanLeapTo(actor: any, target: any, state: any): boolean
 	if not (actor and target and target.tileX and actor.tileX) then return false end
 	local d = math.max(math.abs(actor.tileX - target.tileX), math.abs(actor.tileY - target.tileY))
-	return d <= 1 or CommandService.ComputeChargeLanding(actor, target, state) ~= nil
+	return d <= 1 or CommandService.ComputeChargeLanding(actor, target, state, true) ~= nil
 end
 
 -- LUNGE / RECOIL SHOT tiles (USER RULINGS 2026-11-08 5:07 PM + 6:59 PM, skill rows SKL-LUNGE /
@@ -1937,7 +2252,9 @@ end
 -- step): true when the skill doesn't move the caster, or the move works against `t`.
 local function strikeMoveTargetOk(actor: any, skillDef: any, t: any, state: any): boolean
 	if not (skillDef and type(t) == "table" and t.tileX) then return true end
-	if skillDef.leapsAdjacent and not t.isGroundTarget then
+	-- BUG-183 (batch 14c): Reckless Charge (isCharge; DB "Up to 3-tile legal charge to melee reach",
+	-- "Melee Only") uses the SAME check as Skyfall Lance: it must be able to reach melee range of `t`.
+	if (skillDef.leapsAdjacent or skillDef.isCharge) and not t.isGroundTarget then
 		return CommandService.CanLeapTo(actor, t, state)
 	end
 	if skillDef.stepsToTargetFirst then
@@ -2061,7 +2378,8 @@ local function getPushOverride(actor: any, target: any): (any, boolean, boolean)
 			-- D5 fix (2026-10-27): no swap when either unit is teleport-locked (Gravity Pylon aura,
 			-- Phase Locked) or the pusher is relocation-locked -- the Push stays a normal push.
 			if StatusService.IsRelocationLocked(actor) or StatusService.IsTeleportLocked(actor)
-				or StatusService.IsTeleportLocked(target) then
+				or StatusService.IsTeleportLocked(target)
+				or GameConstants.IsBoss(target) then  -- BUG-177 (core_stats 55): never swap-throw a boss; the normal push resists
 				swapBlocked = true
 			else
 				grapplerSwap = true
@@ -2084,6 +2402,7 @@ end
 -- transfer remaining Force to collided target"). One transfer to whatever stands on (colX, colY): a
 -- unit (shoved with its own collision / fall damage) or a movable object (objects take no damage).
 -- Never the acting unit itself, never re-chains. Shared by the unit Push and the object Push (2026-10-29).
+-- BUG-233: the chain push springs crossed traps through triggerCrossedTraps (defined above the knockback code).
 local function chainPushTransfer(state: any, actor: any, colX: number, colY: number, remaining: number, dir: any)
 	if remaining <= 0 then return end
 	for _, u in ipairs(state.units) do
@@ -2091,14 +2410,35 @@ local function chainPushTransfer(state: any, actor: any, colX: number, colY: num
 			if u.id == actor.id then return end  -- a pull into the user never chains (2026-10-26)
 			local cres = DisplacementService.ResolvePush(actor, u, remaining, dir,
 				GameConstants.KNOCKBACK_SOURCE_MODIFIERS.GlobalPush, state.units, nil, false)
-			if cres and cres.pushed then
+			-- BUG-264 (batch 21b, Studio pass 12): a chain push blocked at once by height (or a wall / object) moved 0 tiles,
+			-- so this block was skipped: ResolvePush printed "WallDmg:11" but the damage was never applied and no push line
+			-- was sent. A 0-tile chain push into a non-unit obstacle now applies its wall damage and sends the blocked line,
+			-- like a knockback into an adjacent wall (_wallBlocked). A 0-tile block by a unit stays a no-op (no move to a
+			-- fallback tile).
+			local _chainWallBlocked = cres ~= nil and not cres.pushed and cres.wallCollision ~= nil
+				and cres.wallCollision.collidedUnitId == nil and (cres.wallCollision.damage or 0) > 0
+			if cres and (cres.pushed or _chainWallBlocked) then
 				u.tileX = cres.finalTileX
 				u.tileY = cres.finalTileY
+				-- BUG-233: traps on the crossed tiles spring first, then collision / fall damage (BUG-226 order).
+				-- BUG-241/242 (batch 20): a trap KO now really KOs the unit and ends its chain push on that tile.
+				local _trapKo = triggerCrossedTraps(state, u, cres.tilesPath, cres)  -- BUG-253
+				if _trapKo then stopPushAtTrapKo(u, cres, _trapKo, actor) end
 				local chainDmg = 0
 				if cres.wallCollision and cres.wallCollision.damage and cres.wallCollision.damage > 0 then chainDmg = chainDmg + cres.wallCollision.damage end
 				if cres.fallDamage and cres.fallDamage > 0 then chainDmg = chainDmg + cres.fallDamage end
-				if chainDmg > 0 then UnitSchema.ApplyDamage(u, chainDmg, "push") end
-				applyForcedEntryEffects(u, cres)
+				-- BUG-222 (batch 18b, Tester W3): the push line shows the HP this unit really lost (BUG-215), and no
+				-- collision damage on the unit it was shoved into (the chain push never applies it).
+				local _p = u.currentHp or 0
+				cres.targetHpLost = 0 -- BUG-232 pattern: a unit a trap KO'd shows no raw damage
+				if chainDmg > 0 and u.isAlive then
+					UnitSchema.ApplyDamage(u, chainDmg, "push")
+					cres.targetHpLost = math.max(0, _p - (u.currentHp or 0))
+					-- BUG-237 (batch 19b, Tester A3): a chain-push KO is credited to the pusher (Objective "Pusher").
+					if not u.isAlive then u._killedBy = u._killedBy or actor.id end
+				end
+				if cres.wallCollision then cres.wallCollision.collidedUnitDamage = 0 end
+				applyForcedEntryEffects(u, cres, true)  -- BUG-207: entry status lines after this push line
 				if BattleVisualBroadcaster.UnitPushed then BattleVisualBroadcaster.UnitPushed(actor, u, cres) end
 				print(string.format("[CommandService] Chain-Push: %s transfers %d force to %s", actor.name, remaining, u.name))
 			end
@@ -2271,38 +2611,71 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 	-- Resolve the counter as a basic attack, reusing the weapon-pattern logic
 	-- from the Attack commit path. Every counter hit is flagged isCounter so
 	-- ApplyOutcome / the caller will not spawn a further counter.
-	local function resolveCounterHit(victim: any, dmgMult: any)
-		if not victim.isAlive then return end
-		local outcome = CombatResolver.ResolveBasicAttack(defender, victim, weaponDamage)
+	-- RAKE on counters (batch 8, 2026-11-22; weapons_equipment 163): a Claws counter resolves the same
+	-- hits as the Attack branch through the same helper (WeaponPassiveService.GetRakeHits + the
+	-- ResolveBasicAttack hitMult / noRiders opts; DAT-001, no copy of the numbers). Statuses ride only
+	-- the first hit that deals damage; the Bleed bonus is per hit (ApplyOutcome, BUG-110).
+	local _rkHits, _rkMult = WeaponPassiveService.GetRakeHits(defender)
+	local _baOpts: any = nil
+	local function resolveCounterHit(victim: any, dmgMult: any): number
+		if not victim.isAlive then return 0 end
+		local outcome = CombatResolver.ResolveBasicAttack(defender, victim, weaponDamage, _baOpts)
 		outcome.isCounter = true
 		outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * mult * (dmgMult or 1.0)))
 		if outcome.type == "Healing" and outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * mult * (dmgMult or 1.0))) end -- Dark vs Undead heal reduced like damage (user ruling 2026-11-06)
 		if (dmgMult or 1.0) < 1.0 then outcome.isAOE = true end
 		CombatResolver.ApplyOutcome(outcome, victim, defender)
-		BattleVisualBroadcaster.UnitStateChanged(victim)
+		-- BUG-172 (batch 14): the counter is the CAUSE of this HP sync (like BUG-166 Rebound), so each hit logs
+		-- once as "<defender>'s Counter hit <unit> for N." (was "lost N HP." + [BattleLog] uncaused warn).
+		BattleVisualBroadcaster.UnitStateChanged(victim, `{defender.name}'s Counter`)
+		-- BUG-180 (batch 14b): flush this hit on its own, so its "Counter hit" line, then its Bleed bonus and
+		-- Sleep-wake lines (held on the snapshot until this sync), go out in order and grouping by cause can
+		-- not move the Bleed lines of a Rake counter ahead of both counter lines.
+		BattleVisualBroadcaster.FlushLog()
+		return if outcome.type == "Damage" then (outcome.finalDamage or 0) else 0
 	end
 
 	print(string.format("[CommandService] COUNTER | %s ripostes %s (x%.2f, %s)",
 		defender.name, attacker.name, mult, weaponPattern))
+	-- BUG-172: inside a held hit command the counter's log lines wait for the hit line that provoked it
+	-- (they were logged before it). Closed below, before the return.
+	local _counterLog = BattleVisualBroadcaster.BeginHitReaction(defender)
 
-	if weaponPattern == "Cleave" or weaponPattern == "Adjacent" then
-		local cleave = TargetingService.GetCleaveTargets(defender, attacker, state.units)
-		for _, u in ipairs(cleave) do
-			resolveCounterHit(u, (u.id == attacker.id) and 1.0 or 0.5)
+	-- BUG-179 (batch 14b): the counter body runs in a pcall so the log capture opened above is ALWAYS closed
+	-- (EndHitReaction below), even if something in the counter throws; the error is then re-raised unchanged.
+	-- Same pattern as BUG-146. Body left at its old indent so the diff stays small.
+	local _counterOk, _counterErr = pcall(function()
+	local _rkRidersDone = false
+	local _counterHitsResolved = 0  -- Rake: the counter RT Delay below is delivered once per resolved hit (row 163)
+	for _rk = 1, _rkHits do
+		if _rk > 1 and not attacker.isAlive then break end
+		_baOpts = if _rkHits > 1 then { hitMult = _rkMult, noRiders = _rkRidersDone } else nil
+		local _passDmg = 0
+		if weaponPattern == "Cleave" or weaponPattern == "Adjacent" then
+			local cleave = TargetingService.GetCleaveTargets(defender, attacker, state.units)
+			for _, u in ipairs(cleave) do
+				_passDmg += resolveCounterHit(u, (u.id == attacker.id) and 1.0 or 0.5)
+			end
+		elseif weaponPattern == "ImpactSplash" then
+			local splash = TargetingService.GetImpactSplashTargets(defender, attacker, state.units)
+			for _, entry in ipairs(splash) do
+				_passDmg += resolveCounterHit(entry.unit, entry.dmgMult)
+			end
+		elseif weaponPattern == "Line2" or weaponPattern == "Line3" then
+			local line = TargetingService.GetWeaponLineTargets(weaponPattern, defender, attacker, state.units)
+			for _, entry in ipairs(line) do
+				_passDmg += resolveCounterHit(entry.unit, entry.dmgMult or 1.0)
+			end
+		else
+			_passDmg += resolveCounterHit(attacker, 1.0)
 		end
-	elseif weaponPattern == "ImpactSplash" then
-		local splash = TargetingService.GetImpactSplashTargets(defender, attacker, state.units)
-		for _, entry in ipairs(splash) do
-			resolveCounterHit(entry.unit, entry.dmgMult)
+		_counterHitsResolved = _rk
+		if _rkHits > 1 then
+			if _passDmg > 0 then _rkRidersDone = true end
+			print(string.format("[CommandService] COUNTER Rake hit %d/%d: %s -> %s (x%.2f)", _rk, _rkHits, defender.name, attacker.name, _rkMult))
 		end
-	elseif weaponPattern == "Line2" or weaponPattern == "Line3" then
-		local line = TargetingService.GetWeaponLineTargets(weaponPattern, defender, attacker, state.units)
-		for _, entry in ipairs(line) do
-			resolveCounterHit(entry.unit, entry.dmgMult or 1.0)
-		end
-	else
-		resolveCounterHit(attacker, 1.0)
 	end
+	_baOpts = nil
 
 	-- Rule 250 (2026-11-08): a counter's weapon splash also hits map objects beside the attacker.
 	if weaponPattern ~= "Single" and attacker.tileX then
@@ -2316,7 +2689,9 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 	defender.remainingRt = (defender.remainingRt or 0) + counterRt
 	print(string.format("[CommandService] COUNTER RT | %s next turn +%d RT (now %d)",
 		defender.name, counterRt, defender.remainingRt))
-	BattleVisualBroadcaster.UnitStateChanged(defender)
+	-- BUG-172 (batch 14): client sync only. The defender's HP change here is the triggering attack's, which
+	-- its own hit line logs; the old full diff logged it a second time as an uncaused "lost 59 HP.".
+	BattleVisualBroadcaster.StatusSync(defender)
 	BattleVisualBroadcaster.Log("rt", `{defender.name} counterattacks; own next turn +{counterRt} RT.`, defender.id)
 
 	-- Weapon RT Delay to the ATTACKER (DB: Riposte 50% / Counter Stance 30% of the
@@ -2331,13 +2706,18 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 	rawDelay = rawDelay * TraitEffectService.GetRtDelayInflictMultiplier(defender)
 	if rawDelay > 0 and attacker.isAlive then
 		local atkVit = attacker.effectiveStats and attacker.effectiveStats.VIT or 10
-		local delay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), atkVit, (attacker.gearDerived and attacker.gearDerived.rtDelayResist or 1))
-		attacker.remainingRt = (attacker.remainingRt or 0) + math.max(0, delay)
+		local delay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), atkVit, (attacker.gearDerived and attacker.gearDerived.rtDelayResist or 1), attacker) -- BUG-158 boss x0.5
+		-- Rake (row 163, batch 8): one resisted delay per resolved hit, like the Attack branch (1 without Rake).
+		delay = math.max(0, delay) * math.max(1, _counterHitsResolved)
+		attacker.remainingRt = (attacker.remainingRt or 0) + delay
 		print(string.format("[CommandService] COUNTER RT-DELAY | %s +%d RT (x%.2f weapon delay)",
 			attacker.name, math.max(0, delay), rtDelayMult))
 		BattleVisualBroadcaster.Log("rt", `{attacker.name} is delayed +{math.max(0, delay)} RT by the counter.`, attacker.id)
 		BattleVisualBroadcaster.UnitStateChanged(attacker)
 	end
+	end)  -- BUG-179: end of the pcall'd counter body
+	BattleVisualBroadcaster.EndHitReaction(_counterLog)  -- BUG-172
+	if not _counterOk then error(_counterErr, 0) end  -- BUG-179: re-raise after the capture is closed
 	return true
 end
 
@@ -2561,7 +2941,7 @@ local function applyReviveSkill(caster: any, target: any, skillDef: any, state: 
 	end
 	target.isAlive     = true
 	UnitSchema.ClearChannelState(target)  -- never return holding a pre-death channel
-	target._revivedThisBattle = true  -- kill-credit rule: revived units never trigger kill augments
+	UnitSchema.MarkRevived(target)  -- kill-credit rule + revive counter (BUG-143)
 	target.currentHp   = reviveHp
 	StatusService.WeakenVenomOnHeal(target)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 	target.remainingRt = skillDef.reviveLowRt and 150 or (target.startingRt or 400)
@@ -2577,8 +2957,14 @@ local function applyReviveSkill(caster: any, target: any, skillDef: any, state: 
 	if state and target.side ~= caster.side then
 		ObjectiveService.RecordEvent(state, "enemiesRevived", 1)
 	end
+	-- BUG-294 (batch 28, Studio pass 19): ONE revive line ("<caster> revives X with <skill> (HP/Max HP).") instead of
+	-- "recovered N HP." + "was revived." from the uncaused sync and a third "heals X with <skill>" line. The sync
+	-- below now only names status changes (e.g. the Phoenix Rite wound cleanse) under the skill.
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.LogReviveSkill then
+		BattleVisualBroadcaster.LogReviveSkill(caster, target, skillDef.name or skillDef.id)
+	end
 	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
-		BattleVisualBroadcaster.UnitStateChanged(target)
+		BattleVisualBroadcaster.UnitStateChanged(target, skillDef.name or skillDef.id)
 	end
 	print(string.format("[CommandService] REVIVE SKILL [%s] | %s revives %s at %d/%d HP%s",
 		skillDef.name or skillDef.id, caster.name, target.name, reviveHp, maxHp,
@@ -2766,7 +3152,7 @@ local function raiseCorpses(caster: any, skillDef: any, state: any): number
 			u.tileX, u.tileY = tx, ty
 			u.isAlive = true
 			UnitSchema.ClearChannelState(u)  -- never return holding a pre-death channel
-			u._revivedThisBattle = true  -- kill-credit rule: revived units never trigger kill augments
+			UnitSchema.MarkRevived(u)  -- kill-credit rule + revive counter (BUG-143)
 			u._raisedAsUndead = true
 			u.currentHp = UnitSchema.ReviveHp(u, pct)  -- revive traits apply (re-check 2026-10-29)
 			u.remainingRt = u.startingRt or 400
@@ -2998,6 +3384,14 @@ local function applyPureBuff(caster: any, skillDef: any, targets: any)
 			print(`[CommandService] {skillDef.name}: {caster.name} transfers {amount} MP to {u.name}`)
 			if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(caster) end
 		end
+		-- BUG-199 (batch 16): sync the MP change BEFORE the statuses go on. This sync used to run after them, so
+		-- its diff logged an uncaused "Ranger is now Mana Surge." ahead of the release's "Ranger's Mana Surge
+		-- lands." line (Coordinated Advance the same). The statuses are logged by the skill's own line
+		-- ("+Mana Surge", and BUG-178/187 "is now <other> (<skill>).") and the "gains" line; the client gets
+		-- them below through StatusSync (no log diff).
+		if BattleVisualBroadcaster.UnitStateChanged then
+			BattleVisualBroadcaster.UnitStateChanged(u)
+		end
 		if skillDef.appliesStatus then
 			StatusService.ApplyStatus(u, skillDef.appliesStatus, caster.id, nil, skillDef.statusDurationCt)
 			applied = skillDef.appliesStatus
@@ -3008,8 +3402,8 @@ local function applyPureBuff(caster: any, skillDef: any, targets: any)
 				applied = applied or sid
 			end
 		end
-		if BattleVisualBroadcaster.UnitStateChanged then
-			BattleVisualBroadcaster.UnitStateChanged(u)
+		if BattleVisualBroadcaster.StatusSync then
+			BattleVisualBroadcaster.StatusSync(u)
 		end
 		table.insert(entries, { target = u, outcome = { finalDamage = 0, appliesStatus = applied } })
 	end
@@ -3672,7 +4066,11 @@ local function previewSkillHitsBase(state: any, actor: any, baseDef: any, tileX:
 		elseif (def.power or 0) == 0 and (o.finalDamage or 0) == 0 then
 			add(u, "status", 0, nil, so)
 		else
-			add(u, "damage", math.max(0, math.round((o.finalDamage or 0) * (mult or 1))) * n, n > 1, so)
+			local per = math.max(0, math.round((o.finalDamage or 0) * (mult or 1)))
+			-- BUG-110: each hit that reduces HP (after shields, W2) on a Bleeding target adds the
+			-- Bleed bonus (same helper as ApplyOutcome; 0 for non-physical hits).
+			local bleed = CombatResolver.PredictBleedBonus(u, actor, o.element, per, n)
+			add(u, "damage", per * n + bleed, n > 1, so)
 		end
 	end
 	local function healWith(u: any)
@@ -4178,7 +4576,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		local frac = data.reviveHpFrac or 0.05
 		target.isAlive   = true
 		UnitSchema.ClearChannelState(target)  -- never return holding a pre-death channel
-		target._revivedThisBattle = true  -- kill-credit rule: revived units never trigger kill augments
+		UnitSchema.MarkRevived(target)  -- kill-credit rule + revive counter (BUG-143)
 		-- Perks & Flaws revive modifiers (2026-10-23): Slow to Recover halves revive HP;
 		-- Resilient adds +20% max HP; Undying Will flaw forces exactly 1 HP (overrides all).
 		local maxHp = target.maxHp or 1
@@ -4633,10 +5031,10 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		for _, t in ipairs(targets) do
 			if t.isAlive then
 				local outcome = CombatResolver.ResolveSkill(unit, t, skillDef)
-				CombatResolver.ApplyOutcome(outcome, t, unit)
+				local _dealt = CombatResolver.ApplyOutcome(outcome, t, unit)  -- BUG-141: HP really removed (log)
 				totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 				hitCount = hitCount + 1
-				table.insert(allOutcomes, { target = t, outcome = outcome })
+				table.insert(allOutcomes, { target = t, outcome = outcome, dealt = _dealt })
 			end
 		end
 		applyAreaRiders(state, unit, skillDef, riderHitsFromOutcomes(allOutcomes), target)  -- rule 252 (2026-11-08); target = main for the delay split
@@ -4669,10 +5067,10 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 				if skillDef.statusLastChainOnly and _chainIdx ~= #chainTargets then outcome.appliesStatus = nil end
 				if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * falloff)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * falloff)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 				outcome.isAOE = true
-				CombatResolver.ApplyOutcome(outcome, u, unit)
+				local _dealt = CombatResolver.ApplyOutcome(outcome, u, unit)  -- BUG-141: HP really removed (log)
 				totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 				hitCount = hitCount + 1
-				table.insert(allOutcomes, { target = u, outcome = outcome })
+				table.insert(allOutcomes, { target = u, outcome = outcome, dealt = _dealt })
 				falloff = falloff * falloffRate
 			end
 		end
@@ -4701,10 +5099,10 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 				local outcome = CombatResolver.ResolveSkill(unit, entry.unit, skillDef)
 				if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * entry.dmgMult)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 				if entry.dmgMult < 1.0 then outcome.isAOE = true end
-				CombatResolver.ApplyOutcome(outcome, entry.unit, unit)
+				local _dealt = CombatResolver.ApplyOutcome(outcome, entry.unit, unit)  -- BUG-141: HP really removed (log)
 				totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 				hitCount = hitCount + 1
-				table.insert(allOutcomes, { target = entry.unit, outcome = outcome })
+				table.insert(allOutcomes, { target = entry.unit, outcome = outcome, dealt = _dealt })
 				if not entry.unit.isAlive then
 					trySpawnSoulEcho(unit, skillDef, entry.unit, outcome.finalDamage or 0, state)
 				end
@@ -4750,10 +5148,10 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 					-- Indiscriminate by default: hit both sides
 					local outcome = CombatResolver.ResolveSkill(unit, u, skillDef)
 					outcome.isAOE = true
-					CombatResolver.ApplyOutcome(outcome, u, unit)
+					local _dealt = CombatResolver.ApplyOutcome(outcome, u, unit)  -- BUG-141: HP really removed (log)
 					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					hitCount = hitCount + 1
-					table.insert(allOutcomes, { target = u, outcome = outcome })
+					table.insert(allOutcomes, { target = u, outcome = outcome, dealt = _dealt })
 				end
 				end
 			  end
@@ -4806,22 +5204,42 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 			_actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target, unit)
 		end
 		unit._skillFizzled = CombatResolver.WasLastHitBlocked ~= nil and CombatResolver.WasLastHitBlocked(target) == true
+		-- BUG-169 (batch 13): the target's HP right after THIS hit, before the skill knockback below moves it
+		-- (a wall / unit collision then takes more). The hit's log line shows this; the push line shows its own.
+		local _hpAfterHit = if target and not target.isGroundTarget then target.currentHp else nil
+		local _koFloorHit = if target then target._koFloorCause else nil  -- BUG-283: before the skill knockback
 		-- Same post-hit effects as the instant path (RT delay, skill knockback).
 		if not _multiHit then
 			applySkillPostHit(state, unit, target, skillDef, _actualDmg or outcome.finalDamage or 0)
 		end
-		result.type          = "Damage"
+		-- BUG-196 (batch 16): a Dark hit on an Undead unit (e.g. a Dark-converted Flash Freeze on a Zombie)
+		-- is a heal outcome: it has finalHealing and NO finalDamage. The release print below crashed on the
+		-- nil (string.format arg #5) and killed the battle loop in ChannelResolve. The release is now
+		-- reported as a heal (ApplyOutcome returned the HP really healed), the same way the heal branch does.
+		local _healOutcome = outcome.type == "Healing"
+		result.type          = if _healOutcome then "Healing" else "Damage"
 		result.target        = target
-		result.damage        = outcome.finalDamage
+		result.targetHpAfter = _hpAfterHit
+		result.koFloorCause  = _koFloorHit or false  -- BUG-284: this release's KO floor, for the battle-log hit line
+		-- BUG-141 (BUG-HUNT-13 / 26): the HP the hit really removed (shield soak, 1-per-hit gadget counter),
+		-- as the instant path reports it.
+		result.damage        = if _healOutcome then 0
+			elseif _actualDmg ~= nil then _actualDmg else (outcome.finalDamage or 0)
+		result.healing       = if _healOutcome then (_actualDmg or outcome.finalHealing or 0) else nil
 		result.statusApplied = statusApplied
 		result.skillName     = skillDef.name
 
-		print(string.format(
-			"[CommandService] Channel ACTIVATE [%s] | %s -> %s | Dmg:%d | MP:%d%s",
-			skillDef.name, unit.name, target.name,
-			outcome.finalDamage, mpCost,
-			statusApplied and (" | +" .. statusApplied) or ""
-		))
+		-- Log line (BUG-196): interpolation + tostring, so a missing value can never crash the release.
+		local _amountTag = if _healOutcome
+			then `Heal:{tostring(_actualDmg or outcome.finalHealing)}`
+			else `Dmg:{tostring(outcome.finalDamage)}`
+		-- BUG-283 (batch 25): same KO-floor note as the instant skill print.
+		if not _healOutcome and _koFloorHit and type(_actualDmg) == "number"
+			and _actualDmg < (outcome.finalDamage or 0) then
+			_amountTag ..= ` HpLost:{_actualDmg} (kept at 1 HP by {_koFloorHit})`
+		end
+		local _statusTag = if statusApplied then ` | +{tostring(statusApplied)}` else ""
+		print(`[CommandService] Channel ACTIVATE [{tostring(skillDef.name or skillDef.id)}] | {tostring(unit.name)} -> {tostring(target.name)} | {_amountTag} | MP:{tostring(mpCost)}{_statusTag}`)
 	end
 
 	-- Rule 250 (2026-11-08): area / splash hits on map objects, once per channelled action, after the
@@ -5476,7 +5894,9 @@ function CommandService.ValidateAndCommit(
 	-- Skyfall Lance (DB: "If no valid landing tile exists adjacent to target, skill fails at
 	-- validation"): the chosen target is checked BEFORE Misdirection / Interception, so a refused
 	-- cast consumes nothing and announces nothing (UAT 2026-10-27 D-1).
-	if actionType == "Skill" and skillDef and skillDef.leapsAdjacent then
+	-- BUG-183 (batch 14c): Reckless Charge (isCharge) is refused the same way when it cannot reach
+	-- melee range of the target (DB "to melee reach", "Melee Only"); no strike from range.
+	if actionType == "Skill" and skillDef and (skillDef.leapsAdjacent or skillDef.isCharge) then
 		local t0 = type(selection) == "table" and selection.target or nil
 		if type(t0) == "table" and t0.tileX and not t0.isGroundTarget and not CommandService.CanLeapTo(actor, t0, state) then
 			return false, "No free tile next to the target to land on."
@@ -5547,10 +5967,11 @@ function CommandService.ValidateAndCommit(
 
 	-- Safety net: both redirects only pick units Skyfall can land next to (above), so this should
 	-- never fire. Kept so a leap can never resolve as a ranged strike.
-	if actionType == "Skill" and skillDef and skillDef.leapsAdjacent then
+	-- BUG-183 (batch 14c): Reckless Charge too, so a charge can never resolve as a ranged strike.
+	if actionType == "Skill" and skillDef and (skillDef.leapsAdjacent or skillDef.isCharge) then
 		local t = type(selection) == "table" and selection.target or nil
 		if type(t) == "table" and t.tileX and not t.isGroundTarget and not CommandService.CanLeapTo(actor, t, state) then
-			warn(`[CommandService] Skyfall redirect landed on an unleapable target ({t.name}); cast refused`)
+			warn(`[CommandService] {skillDef.name or "Skyfall"} redirect landed on an unleapable target ({t.name}); cast refused`)
 			return false, "No free tile next to the target to land on."
 		end
 	end
@@ -5658,6 +6079,10 @@ function CommandService.ValidateAndCommit(
 		if not actor.isAlive then
 			StatusService.SetCurrentAction(nil)
 			if BattleVisualBroadcaster.FlushLog then BattleVisualBroadcaster.FlushLog() end
+			-- BUG-126 (BUG-HUNT-21, 2026-11-22): the action did NOT happen. Mark it so the caller does not
+			-- log "X uses <skill> on Y: -0 HP" after "X was defeated (Wounded)". Read by
+			-- CommandService.WasActionVoided, reset by the ValidateAndCommit wrapper on every command.
+			actor._actionVoided = true
 			BattleCoordinator.EndTurn(state)
 			return true, nil
 		end
@@ -5706,9 +6131,28 @@ function CommandService.ValidateAndCommit(
 		-- stop the walk at that tile; Spike and Land Mine do not. Flight bypasses.
 		local destX, destY = selection.tileX, selection.tileY
 		-- FT-018 Rescue Spurs: tile the ally will relocate to if this Move ends on an ally (the rescuer's
-		-- last crossed tile). Defaults to the origin (covers a flying rescuer / adjacent ally); refined to
-		-- the tile before the destination inside the grounded walk below.
+		-- nearest free crossed tile). Defaults to the origin (covers a flying rescuer / adjacent ally); set
+		-- by pickFreeBackTile() below when a rescue or blocked kick needs it (BUG-276).
 		local rescueBackX, rescueBackY = prevTileX, prevTileY
+		-- BUG-276 (batch 23b): tiles the grounded walk crosses (filled below; empty for a flyer). A walker
+		-- can cross allies (and enemies with Phantom Steps), so the last crossed tile may hold a unit.
+		-- pickFreeBackTile walks `crossed` backwards from the tile before the destination and returns the
+		-- first one with no living unit other than the actor; if none is free it returns the origin
+		-- (prevTileX/Y). Shared by the Rescue Spurs relocation and the blocked Kick Boots fallback.
+		local crossed = {}
+		local function pickFreeBackTile()
+			for i = #crossed - 1, 1, -1 do
+				local t = crossed[i]
+				local taken = false
+				for _, u in ipairs(state.units) do
+					if u ~= actor and u.isAlive and u.tileX == t.x and u.tileY == t.y then
+						taken = true; break
+					end
+				end
+				if not taken then return t.x, t.y end
+			end
+			return prevTileX, prevTileY
+		end
 		local trapSprung = false
 		-- Tiles actually entered this Move (2026-10-28). Charge, Skirmisher, Dodger / Sitting Duck,
 		-- Momentum Bracers and Heavy March Boots are "per tile moved"; they used to read the path COST
@@ -5718,13 +6162,15 @@ function CommandService.ValidateAndCommit(
 		-- Something this Move did to the board that Undo cannot put back (fire trail, rescued ally,
 		-- kicked enemy): blocks Undo (2026-10-28).
 		local moveSideEffect = false
+		-- BUG-303 (batch 31): last tile whose tile-effect cross effect was applied during the walk, so the
+		-- end-tile call below does not apply it a second time when the walk stopped there.
+		local crossFxX, crossFxY = nil, nil
 		local trapActorFlying = StatusService.HasStatus(actor, "Flight")
 		if trapActorFlying then
 			actor.tileX = destX
 			actor.tileY = destY
 			tilesMoved = math.max(math.abs(destX - prevTileX), math.abs(destY - prevTileY))
 		else
-			local crossed = {}
 			local moveCands = TargetingService.GetMoveCandidates(actor, state.units, _mapWidth, _mapHeight)
 			local matched = nil
 			for _, c in ipairs(moveCands) do
@@ -5738,11 +6184,9 @@ function CommandService.ValidateAndCommit(
 				print("[CommandService] Trap walk: no server path to destination; checking destination tile only.")
 			end
 			table.insert(crossed, { x = destX, y = destY })
-			-- FT-018 Rescue Spurs: the tile crossed just BEFORE the destination (last entry is the
-			-- destination itself). Used only if this turns out to be a rescue landing.
-			if #crossed >= 2 then
-				rescueBackX, rescueBackY = crossed[#crossed - 1].x, crossed[#crossed - 1].y
-			end
+			-- FT-018 Rescue Spurs / FT-019 Kick Boots: the fall-back tile is no longer fixed here as the
+			-- last crossed tile (it could hold another unit). BUG-276: pickFreeBackTile() chooses it at
+			-- the moment it is needed, from `crossed` (last entry is the destination itself).
 
 			local fx, fy = prevTileX, prevTileY
 			-- FT-007 Softstep Slippers: crossing a trap tile does not trigger it; only ENDING on a trap
@@ -5762,9 +6206,34 @@ function CommandService.ValidateAndCommit(
 				local isFinalTile = (tile.x == destX and tile.y == destY)
 				local trap = ObjectEffectService.GetTriggeredTrapAt(state, tile.x, tile.y)
 				if trap and not (avoidCrossTraps and not isFinalTile) then
-					local tr = ObjectEffectService.TriggerTrap(actor, trap, state, state.units)
+					-- BUG-247: walking onto a trap that takes HP to 0 is a real KO (it stayed alive at 0 HP).
+					local tr = springTrap(actor, trap, state)
 					if tr.fired then trapSprung = true end
 					if tr.stops then break end
+				end
+				-- BUG-303 (batch 31, Studio pass 22): walking THROUGH a Burning tile gave no Burn; only the end
+				-- tile's effect was applied (below). DB terrain_effects Burning: Cross Effect "Inflict Burn" (also
+				-- Poison Cloud -> Poison, Vines -> Pinned). Each crossed tile now goes through the same shared
+				-- TileEffectService.OnUnitEntersTile the end tile and a push landing use (Firewalker, status
+				-- immunity, the BUG-301 Burn amount and the log line all live there). Flight never gets here (the
+				-- flying branch above skips the walk); a teleport-style move enters no tiles on the way.
+				if not isFinalTile and actor.isAlive and not (matched and matched.isTeleport)
+					and _tileEffectService and _tileEffectService.OnUnitEntersTile and _tileEffectService.GetTileEffect then
+					local _cte = _tileEffectService.GetTileEffect(tile.x, tile.y)
+					local _cdef = _cte and GameConstants.TILE_EFFECTS and GameConstants.TILE_EFFECTS[_cte.id]
+					if _cdef and _cdef.crossEffect then
+						moveSideEffect = true  -- a status picked up on the way can't be undone with the Move
+						local _wasPinned = StatusService.HasStatus(actor, "Pinned")
+						_tileEffectService.OnUnitEntersTile(actor, tile.x, tile.y)
+						crossFxX, crossFxY = tile.x, tile.y
+						if not actor.isAlive then break end
+						-- Pinned on the way (Vines) stops the walk on that tile, like a rooting trap [agent default].
+						if not _wasPinned and StatusService.HasStatus(actor, "Pinned") then
+							print(string.format("[CommandService] Walk stopped: %s Pinned by %s at (%d,%d)",
+								actor.name, _cte.id, tile.x, tile.y))
+							break
+						end
+					end
 				end
 			end
 			actor.tileX = fx
@@ -5793,11 +6262,11 @@ function CommandService.ValidateAndCommit(
 		end
 
 		-- FT-018 Rescue Spurs: if the Move ENDED on an ally's tile, relocate that ally to the rescuer's
-		-- last crossed tile (rescueBackX/Y) and charge RT x2 (contextual -- double the base move RT by
+		-- nearest free crossed tile (rescueBackX/Y) and charge RT x2 (contextual -- double the base move RT by
 		-- accruing one more rtCost). Gated on the actor actually REACHING the destination (a trap that
 		-- stopped the walk short leaves actor.tileX/Y != destX/Y and cancels the rescue). The ally's
-		-- target tile was crossed by the rescuer this move, so it is empty now that the rescuer left it.
-		if actor.tileX == destX and actor.tileY == destY and ArmorPassiveService.GetMoveRescueConfig(actor) then
+		-- target tile is picked by pickFreeBackTile (BUG-276) so it never holds another living unit.
+		if actor.isAlive and actor.tileX == destX and actor.tileY == destY and ArmorPassiveService.GetMoveRescueConfig(actor) then  -- BUG-251: a trap-KO'd walker does not rescue
 			local rescuedAlly = nil
 			for _, u in ipairs(state.units) do
 				if u ~= actor and u.isAlive and u.side == actor.side
@@ -5807,6 +6276,8 @@ function CommandService.ValidateAndCommit(
 			end
 			if rescuedAlly then
 				moveSideEffect = true
+				-- BUG-276: first crossed tile (walking back) with no other living unit, else the origin.
+				rescueBackX, rescueBackY = pickFreeBackTile()
 				rescuedAlly.tileX = rescueBackX
 				rescuedAlly.tileY = rescueBackY
 				BattleCoordinator.AccrueRt(state, rtCost)
@@ -5814,16 +6285,18 @@ function CommandService.ValidateAndCommit(
 				if BattleVisualBroadcaster.UnitMoved then BattleVisualBroadcaster.UnitMoved(rescuedAlly) end
 				print(string.format("[CommandService] Rescue Spurs: %s rescues %s -> (%d,%d) | RT x2",
 					actor.name, rescuedAlly.name, rescueBackX, rescueBackY))
+				-- BUG-273 (batch 23, Studio pass 14): the rescue wrote no battle-log line (a Kick Boots move logs its push line).
+				BattleVisualBroadcaster.Log("action", `{actor.name} rescues {rescuedAlly.name}, who moves to ({rescueBackX},{rescueBackY}) (Rescue Spurs).`, actor.id)
 			end
 		end
 
 		-- FT-019 Kick Boots: if the Move ENDED on an enemy's tile, knock that enemy back in ITS OWN facing
 		-- direction (DB: "trigger Knockback on enemy in enemy's facing direction"); the kicker then holds
 		-- the vacated tile. RT x2 (one extra rtCost accrual). If the enemy could NOT be displaced (wall /
-		-- displacement-immune, still on the tile and alive), the kicker stays on its last crossed tile
-		-- (rescueBackX/Y) so two units never share a tile -- the knockback attempt + any wall-collision
+		-- displacement-immune, still on the tile and alive), the kicker falls back to pickFreeBackTile()
+		-- (BUG-276) so two units never share a tile -- the knockback attempt + any wall-collision
 		-- damage still resolved. Gated on the actor actually reaching the destination (trap-stop cancels).
-		if actor.tileX == destX and actor.tileY == destY and ArmorPassiveService.GetMoveKickConfig(actor) then
+		if actor.isAlive and actor.tileX == destX and actor.tileY == destY and ArmorPassiveService.GetMoveKickConfig(actor) then  -- BUG-251: a trap-KO'd walker does not kick
 			local kicked = nil
 			for _, u in ipairs(state.units) do
 				if u ~= actor and u.isAlive and u.side ~= actor.side
@@ -5840,6 +6313,8 @@ function CommandService.ValidateAndCommit(
 				undoMoveRt = undoMoveRt + rtCost
 				if kicked.isAlive and kicked.tileX == destX and kicked.tileY == destY then
 					-- push blocked: enemy still occupies the tile -> kicker cannot share it.
+					-- BUG-276: first crossed tile (walking back) with no other living unit, else the origin.
+					rescueBackX, rescueBackY = pickFreeBackTile()
 					actor.tileX = rescueBackX
 					actor.tileY = rescueBackY
 					print(string.format("[CommandService] Kick Boots: %s could not displace %s (blocked) -- holds at (%d,%d) | RT x2",
@@ -5851,10 +6326,14 @@ function CommandService.ValidateAndCommit(
 			end
 		end
 
+		-- BUG-282 (batch 25, Studio pass 16): this line printed the base rtCost (RT:11) after a Kick Boots /
+		-- Rescue Spurs move had already accrued it twice (22, the price the prompt shows). It now prints the
+		-- RT charged so far (undoMoveRt) and names the x2. Destination crossCost is added further down.
+		local _rtX2Tag = if undoMoveRt > rtCost then string.format(" (base %d x2)", rtCost) else ""
 		print(string.format(
-			"[CommandService] MOVE | %s -> (%d,%d) | RT:%d | AP left:%d",
+			"[CommandService] MOVE | %s -> (%d,%d) | RT:%d%s | AP left:%d",
 			actor.name, actor.tileX, actor.tileY,
-			rtCost, actor.currentAp
+			undoMoveRt, _rtX2Tag, actor.currentAp
 		))
 
 		-- Update facing: face movement direction
@@ -5919,7 +6398,8 @@ function CommandService.ValidateAndCommit(
 			end
 
 			-- Tile effect cross check (Burning, Poison Cloud, etc.)
-			if _tileEffectService then
+			-- BUG-303: skip it when the walk already applied this tile's effect (stopped there by Pinned).
+			if _tileEffectService and not (crossFxX == actor.tileX and crossFxY == actor.tileY) then
 				_tileEffectService.OnUnitEntersTile(actor, actor.tileX, actor.tileY)
 			end
 		end
@@ -5974,7 +6454,7 @@ function CommandService.ValidateAndCommit(
 				local pur = ArmorPassiveService.GetMovePursuerConfig(actor)
 				if pur then
 					for _, e in ipairs(adjacentEnemies) do
-						e.remainingRt = (e.remainingRt or 0) + pur.rtDelay
+						e.remainingRt = (e.remainingRt or 0) + GameConstants.ApplyBossRtDelay(e, pur.rtDelay) -- BUG-158
 						print(string.format("[CommandService] Pursuer Greaves: %s delays %s by +%d RT (now %d)", actor.name, e.name, pur.rtDelay, e.remainingRt))
 					end
 					actor._armorPursuerUsed = true
@@ -6219,6 +6699,7 @@ function CommandService.ValidateAndCommit(
 		local _rkRidersDone = false
 		for _rk = 1, _rkHits do
 		if _rk > 1 and not target.isAlive then break end
+		-- BUG-110: the Bleed bonus is PER HIT (elements_statuses 54) -> no opt; only statuses are once per attack.
 		local _baOpts = if _rkHits > 1 then { hitMult = _rkMult, noRiders = _rkRidersDone } else nil
 		local _rkDmgBefore = totalDmg
 		if weaponPattern == "ImpactSplash" then
@@ -6305,12 +6786,22 @@ function CommandService.ValidateAndCommit(
 					local _ro = CombatResolver.ResolveBasicAttack(actor, _rb, weaponDamage, { hitMult = _rbMult, noRiders = true })
 					_ro.isAOE = true
 					_ro.weaponDrainFrac = 0
-					CombatResolver.ApplyOutcome(_ro, _rb, actor)
+					-- BUG-192 (batch 15): inside a held hit command the Rebound's lines wait for the attack line on the
+					-- primary target (same BeginHitReaction hold as the BUG-172 counter); it was logged before it.
+					local _rbLog = BattleVisualBroadcaster.BeginHitReaction(target)
+					local _rbOk, _rbErr = pcall(function()
+						CombatResolver.ApplyOutcome(_ro, _rb, actor)
+						-- BUG-166 (batch 13): the Rebound is the CAUSE of this HP sync, so the HP diff is its one log line
+						-- ("<actor>'s Rebound hit <unit> for N."; a KO reads "was defeated (<actor>'s Rebound)"). It was an
+						-- uncaused sync ("lost N HP." + [BattleLog] warn) followed by a second hand-written Rebound line.
+						BattleVisualBroadcaster.UnitStateChanged(_rb, `{actor.name}'s Rebound`)
+						BattleVisualBroadcaster.FlushLog()  -- BUG-192: into the capture before it closes
+					end)
+					BattleVisualBroadcaster.EndHitReaction(_rbLog)  -- BUG-192: always closed, even on an error
+					if not _rbOk then error(_rbErr, 0) end
 					totalDmg = totalDmg + (_ro.finalDamage or 0)
 					_reboundDmg = _reboundDmg + (_ro.finalDamage or 0)
 					hitCount = hitCount + 1
-					BattleVisualBroadcaster.UnitStateChanged(_rb)
-					BattleVisualBroadcaster.Log("action", `{actor.name}'s Rebound hits {_rb.name} for {_ro.finalDamage or 0}.`, actor.id)
 					print(string.format("[CommandService] Rebound: %s -> %s (next to %s) %d dmg (x%.2f)",
 						actor.name, _rb.name, target.name, _ro.finalDamage or 0, _rbMult))
 				end
@@ -6415,7 +6906,7 @@ function CommandService.ValidateAndCommit(
 		end
 		if rawDelay > 0 and target.isAlive and not _blockedHit then
 			local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
-			local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit, (target.gearDerived and target.gearDerived.rtDelayResist or 1))
+			local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit, (target.gearDerived and target.gearDerived.rtDelayResist or 1), target) -- BUG-158 boss x0.5
 			-- Rake (row 163): RT Delay on each hit -> one resisted delay per resolved hit (1 without Rake).
 			target.remainingRt = target.remainingRt + math.max(0, actualDelay) * _rakeDelayHits
 		end
@@ -6653,7 +7144,11 @@ function CommandService.ValidateAndCommit(
 			-- Caster animation (2026-10-28): double-cast for a real channel, quick cast for an
 			-- activation-delayed (zero-channel) skill.
 			BattleVisualBroadcaster.ChannelStarted(actor, skillDef.isHealing == true, if hasChannel then "DoubleCast" else "QuickCast")
-			BattleVisualBroadcaster.Log("channel", `{actor.name} begins channeling {skillDef.name or "a skill"} ({channelRt} CT).`, actor.id)
+			-- BUG-200 (batch 16): the real wait until the skill lands = channel + activation time (StartChanneling
+			-- schedules both). An activation-only skill (Rainfall Zone) read "begins channeling Rainfall Zone (0 CT)."
+			-- and "Channel RT:0", then landed 250 CT later.
+			local _castDelay = channelRt + (activationCt or 0)
+			BattleVisualBroadcaster.Log("channel", `{actor.name} begins channeling {skillDef.name or "a skill"} ({_castDelay} CT).`, actor.id)
 
 			-- TWO-TIMER MODEL: the caster ends its turn NORMALLY (base + this skill's RT
 			-- cost), so it keeps a real, independent RT. The channel deadline
@@ -6697,12 +7192,7 @@ function CommandService.ValidateAndCommit(
 			BattleCoordinator.AccrueRt(state, chBaseRtCost)
 			BattleCoordinator.EndTurn(state)
 
-			print(string.format(
-				"[CommandService] SKILL COMMIT (CHANNEL) [%s] | %s -> %s | Channel RT:%d | MP reserved:%d",
-				skillDef.name or skillDef.id,
-				actor.name, target.name,
-				channelRt, mpCost
-			))
+			print(`[CommandService] SKILL COMMIT (CHANNEL) [{tostring(skillDef.name or skillDef.id)}] | {tostring(actor.name)} -> {tostring(target and target.name)} | Channel RT:{channelRt} | Activation:{tostring(activationCt or 0)} | Lands in:{_castDelay} CT | MP reserved:{tostring(mpCost)}`)
 
 			return true, nil -- Turn already ended normally (two-timer model); channel resolves at its deadline
 		end
@@ -7398,6 +7888,11 @@ function CommandService.ValidateAndCommit(
 					actor.tileX = bestTile.x
 					actor.tileY = bestTile.y
 					BattleVisualBroadcaster.UnitMoved(actor)
+				elseif not CommandService.CanLeapTo(actor, target, state) then
+					-- BUG-183 (batch 14c): validation (CanLeapTo, same as Skyfall Lance) refuses a charge that
+					-- cannot reach melee range, so this should never happen; logged if it ever does.
+					warn(string.format("[CommandService] CHARGE | %s reached commit with no landing next to %s (validation should have refused)",
+						actor.name, tostring(target.name)))
 				end
 			end
 
@@ -7433,6 +7928,8 @@ function CommandService.ValidateAndCommit(
 				actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target, actor)
 			end
 			_primaryTargetDamage = actualDmg or outcome.finalDamage or 0
+			-- BUG-283: the KO floor of THIS hit, read before post-hit knockback / augments can deal more damage.
+			local _koFloorHit = target._koFloorCause
 			BattleCoordinator.AccrueRt(state, baseRtCost)
 			-- Countermeasure (user ruling 2026-10-27): a blocked single-target skill fizzles fully.
 			actor._skillFizzled = CombatResolver.WasLastHitBlocked ~= nil and CombatResolver.WasLastHitBlocked(target) == true
@@ -7590,13 +8087,16 @@ function CommandService.ValidateAndCommit(
 				end
 			end
 
-			print(string.format(
-				"[CommandService] SKILL [%s] | %s -> %s | Dmg:%d | MP:%d | RT:%d | AP left:%d%s",
-				skillDef.name or skillDef.id,
-				actor.name, target.name,
-				outcome.finalDamage, mpCost, baseRtCost, actor.currentAp,
-				statusApplied and (" | +" .. statusApplied) or ""
-			))
+			-- BUG-196 (batch 16): same nil as the channel release (a Dark hit on an Undead unit is a heal
+			-- outcome with no finalDamage), so this print is nil-safe too.
+			local _amtTag = if outcome.type == "Healing" then `Heal:{tostring(actualDmg or outcome.finalHealing)}` else `Dmg:{tostring(outcome.finalDamage)}`
+			-- BUG-283 (batch 25, Studio pass 16): when a KO floor kept the target alive, also print the HP it
+			-- really lost and name the effect (Holy Smite printed Dmg:57; the target went 35 -> 1).
+			if outcome.type ~= "Healing" and _koFloorHit and type(actualDmg) == "number"
+				and actualDmg < (outcome.finalDamage or 0) then
+				_amtTag ..= ` HpLost:{actualDmg} (kept at 1 HP by {_koFloorHit})`
+			end
+			print(`[CommandService] SKILL [{tostring(skillDef.name or skillDef.id)}] | {tostring(actor.name)} -> {tostring(target.name)} | {_amtTag} | MP:{tostring(mpCost)} | RT:{tostring(baseRtCost)} | AP left:{tostring(actor.currentAp)}{if statusApplied then " | +" .. tostring(statusApplied) else ""}`)
 			end
 		end
 
@@ -7906,12 +8406,11 @@ function CommandService.ValidateAndCommit(
 		-- (Pinned/Bleed/RT/direct damage) apply to the pushed unit; a Land Mine
 		-- detonates at its tile. Forced momentum does NOT stop early (only a KO ends
 		-- the unit). Walks the crossed-tile list ResolvePush now returns.
-		if ObjectEffectService and result.tilesPath then
-			for _, tp in ipairs(result.tilesPath) do
-				local trap = ObjectEffectService.GetTriggeredTrapAt(state, tp.x, tp.y)
-				if trap then ObjectEffectService.TriggerTrap(target, trap, state, state.units) end
-			end
-		end
+		-- BUG-236 (batch 19b): shared loop; it stops once the target is KO'd (same as chain push / Shockwave).
+		-- BUG-241 (batch 20, Studio pass 10): a trap KO ends the push on that tile: no second trap, no further slide,
+		-- no collision / chain transfer / Shockwave, no Raptured (the unit is KO'd before applyForcedEntryEffects).
+		local _trapKo = triggerCrossedTraps(state, target, result.tilesPath, result)  -- BUG-253
+		if _trapKo then stopPushAtTrapKo(target, result, _trapKo, actor) end
 
 		-- Apply collision/fall damage
 		local totalPushDmg = 0
@@ -7935,10 +8434,13 @@ function CommandService.ValidateAndCommit(
 		local crushCfg = ArmorPassiveService.GetPushCollisionConfig(actor)
 		local pushShieldMult = (crushCfg and crushCfg.type == "Crush" and crushCfg.doubleVsShields) and 2 or 1
 		if totalPushDmg > 0 then
+			local _hpPre = target.currentHp or 0
 			UnitSchema.ApplyDamage(target, totalPushDmg, "push", pushShieldMult)
+			result.targetHpLost = math.max(0, _hpPre - (target.currentHp or 0))  -- BUG-215 (batch 18): HP really lost, for the log line
+			if not target.isAlive then target._killedBy = target._killedBy or actor.id end  -- BUG-252 (batch 20c, Tester A5): Push collision/fall KO credits the pusher
 		end
 		-- Ground effect of the landing tile (chasm floors etc.; map_gen_rules row 65).
-		applyForcedEntryEffects(target, result)
+		applyForcedEntryEffects(target, result, true)  -- BUG-207: entry status lines after the push line (UnitPushed below)
 		-- GL-015 Throwing Gloves: the tile the pushed unit landed on drops by 1 (2026-10-29).
 		if result.pushed and target.isAlive and ArmorPassiveService.GetPushArcConfig(actor) then
 			if throwingGlovesLowerTile(state, target.tileX, target.tileY) then
@@ -7953,20 +8455,33 @@ function CommandService.ValidateAndCommit(
 			and result.wallCollision.collidedUnitDamage
 			and result.wallCollision.collidedUnitDamage > 0
 		then
+			result.wallCollision.collidedUnitHpLost = 0  -- BUG-222 (batch 18b, Tester W3): a dead collided unit shows no "-N HP"
 			for _, u in ipairs(state.units) do
 				if u.id == result.wallCollision.collidedUnitId and u.isAlive then
-					UnitSchema.ApplyDamage(u, result.wallCollision.collidedUnitDamage)
+					local _hpPre = u.currentHp or 0
+					-- BUG-262 (batch 21b, Studio pass 12): the bystander the target was pushed into got no kill credit
+					-- (and no "push" cause) on a collision KO. Same as the knockback path: cause "push", credit the pusher.
+					UnitSchema.ApplyDamage(u, result.wallCollision.collidedUnitDamage, "push")
+					result.wallCollision.collidedUnitHpLost = math.max(0, _hpPre - (u.currentHp or 0))  -- BUG-215: a 1-HP unit loses 1, not 10
+					if not u.isAlive then u._killedBy = u._killedBy or actor.id end  -- BUG-262
 					-- Visual only (2026-10-30): carry the struck unit's HP in the push broadcast so the
 					-- client updates its bar and shows a collision KO (same as the knockback path).
 					result.wallCollision.collidedUnitHpAfter = u.currentHp
 					print(string.format(
-						"[CommandService] COLLISION | %s also takes %d damage from impact",
-						u.name, result.wallCollision.collidedUnitDamage
+						"[CommandService] COLLISION | %s also takes %d damage from impact (HP lost %d)",
+						u.name, result.wallCollision.collidedUnitDamage, result.wallCollision.collidedUnitHpLost or 0
 					))
 					break
 				end
 			end
 		end
+
+		-- Broadcast
+		-- BUG-246 (batch 20, Studio pass 10): the main push line goes out HERE, before the GL-014 chain push and the
+		-- GL-020 Shockwave below, so the battle log reads in the order things happened (it was sent after them, so
+		-- the chain-push lines came first). The struck unit's HP in it is its HP after this collision; the chain /
+		-- shockwave push lines that follow carry its later HP. Visual data only.
+		BattleVisualBroadcaster.UnitPushed(actor, target, result)
 
 		-- GL-014 Chain-Push Bracers: if the pushed target COLLIDED with another UNIT, transfer the
 		-- REMAINING force (original force minus tiles already traveled) to that collided unit, shoving it
@@ -8004,17 +8519,29 @@ function CommandService.ValidateAndCommit(
 							if sres and sres.pushed then
 								u.tileX = sres.finalTileX
 								u.tileY = sres.finalTileY
-								if BattleVisualBroadcaster.UnitPushed then BattleVisualBroadcaster.UnitPushed(actor, u, sres) end
 								-- A shove is a push (re-check 2026-10-29): traps on the tiles it crosses, fall
-								-- damage and the landing tile's ground effect apply like any other push.
-								for _, tp in ipairs(sres.tilesPath or {}) do
-									local trap = ObjectEffectService.GetTriggeredTrapAt(state, tp.x, tp.y)
-									if trap and u.isAlive then ObjectEffectService.TriggerTrap(u, trap, state, state.units) end
-								end
+								-- damage (below) and the landing tile's ground effect apply like any other push.
+								-- BUG-226 (batch 18c, Tester W1 on BUG-222): traps run FIRST, then fall damage, as in knockback and the
+								-- Push action, so a fall KO no longer leaves the crossed traps armed.
+								-- BUG-242 (batch 20): the shared trap loop, so a trap KO here is a real KO too (it left 0 HP alive).
+								local _swKo = triggerCrossedTraps(state, u, sres.tilesPath, sres)  -- BUG-253
+								if _swKo then stopPushAtTrapKo(u, sres, _swKo, actor) end
+								-- BUG-222 (batch 18b, Tester W3): fall damage is applied BEFORE the push line and measured (BUG-215), so
+								-- the line shows the HP really lost and the HP after it. UnitPushed syncs the log HP and queues the KO,
+								-- so the extra UnitStateChanged (it logged the same fall damage a second time) is gone.
+								-- BUG-232 (batch 19, Tester UAT batch 18c): start at 0, so a unit a trap already KO'd shows no fall damage.
+								sres.targetHpLost = 0
 								if u.isAlive and (sres.fallDamage or 0) > 0 then
+									local _sPre = u.currentHp or 0
 									UnitSchema.ApplyDamage(u, sres.fallDamage, "push")
-									BattleVisualBroadcaster.UnitStateChanged(u)
+									sres.targetHpLost = math.max(0, _sPre - (u.currentHp or 0))
+									-- BUG-227 (batch 18c, Tester A3): a shockwave fall KO is credited to the pusher (Objective "Pusher").
+									if not u.isAlive then u._killedBy = u._killedBy or actor.id end
 								end
+								-- BUG-227 (batch 18c, Tester A3): the shove is displacement only, so the unit it is shoved into takes no
+								-- collision damage and the push line shows none (same as the chain path).
+								if sres.wallCollision then sres.wallCollision.collidedUnitDamage = 0 end
+								if BattleVisualBroadcaster.UnitPushed then BattleVisualBroadcaster.UnitPushed(actor, u, sres) end
 								applyForcedEntryEffects(u, sres)
 							end
 							break
@@ -8024,20 +8551,6 @@ function CommandService.ValidateAndCommit(
 				print(string.format("[CommandService] Shockwave Gauntlets: %s collision shockwave around (%d,%d)", actor.name, cx, cy))
 			end
 		end
-
-		-- Broadcast
-		-- Struck unit's HP is read again right before sending (2026-10-30, fix attempt 2):
-		-- Chain-Push (GL-014) and Shockwave (GL-020) can damage it AFTER the collision above,
-		-- so the value saved in the collision loop may be stale. Visual data only.
-		if result.wallCollision and result.wallCollision.collidedUnitHpAfter ~= nil then
-			for _, u in ipairs(state.units) do
-				if u.id == result.wallCollision.collidedUnitId then
-					result.wallCollision.collidedUnitHpAfter = u.currentHp
-					break
-				end
-			end
-		end
-		BattleVisualBroadcaster.UnitPushed(actor, target, result)
 
 		-- ===== Glove on-push reactions (2026-10-25): fire only on a push that actually moved the target
 		-- (tilesDisplaced > 0); a fully-resisted 0-distance push triggers neither. =====
@@ -8049,7 +8562,7 @@ function CommandService.ValidateAndCommit(
 			if stagger and target.isAlive then
 				-- Time Locker family scales it too (re-check 2026-10-29).
 				target.remainingRt = (target.remainingRt or 0)
-					+ math.round((stagger.rtDelay or 0) * TraitEffectService.GetRtDelayInflictMultiplier(actor))
+					+ GameConstants.ApplyBossRtDelay(target, math.round((stagger.rtDelay or 0) * TraitEffectService.GetRtDelayInflictMultiplier(actor))) -- BUG-158
 				if stagger.movePenalty and stagger.movePenalty < 0 then
 					target._imposedMovePendingMag = (target._imposedMovePendingMag or 0) + (-stagger.movePenalty)
 				end
@@ -8158,11 +8671,16 @@ function CommandService.ValidateAndCommit(
 		end
 
 		local actionLabel = pushOverride and pushOverride.label or "PUSH"
+		-- BUG-231 (batch 19, Studio pass 9): a push that moved 0 tiles also names why (DisplacementService
+		-- resistReason, or the blocker it hit), so "Moved:0" is never left without a reason.
+		local _zeroWhy = if (result.tilesDisplaced or 0) > 0 then ""
+			elseif result.resistReason then " | Reason: " .. tostring(result.resistReason)
+			elseif result.blockedBy then " | Reason: blocked by " .. tostring(result.blockedBy) else ""
 		print(string.format(
-			"[CommandService] %s | %s -> %s | Force:%d | Moved:%d to (%d,%d) | Dmg:%d | RT:%d | AP left:%d",
+			"[CommandService] %s | %s -> %s | Force:%d | Moved:%d to (%d,%d) | Dmg:%d | RT:%d | AP left:%d%s",
 			actionLabel, actor.name, target.name, force,
 			result.tilesDisplaced, result.finalTileX, result.finalTileY,
-			totalPushDmg, pushRt, actor.currentAp
+			totalPushDmg, pushRt, actor.currentAp, _zeroWhy
 		))
 
 	elseif actionType == "PushObject" then
@@ -8941,8 +9459,13 @@ function CommandService.ValidateAndCommit(
 						if not u.isAlive then placed.ignoreKo[u.id] = true end
 					end
 				end
+				-- BUG-189 (batch 15): the item line reads "<unit> uses <item>: <description>.", so the description
+				-- says what was placed in the existing "placed" wording (BattleVisualBroadcaster.ItemUsed), and only
+				-- names the object when it differs from the item. It read "uses Rescue Beacon: Rescue Beacon
+				-- deployed Rescue Beacon."
+				local _placedName = (_arch and type(_arch.name) == "string" and _arch.name) or tostring(_deployPlan.ref)
 				effectResult = { effectType = "Deploy", amount = 0,
-					description = consumableDef.name .. " deployed " .. _deployPlan.ref,
+					description = if _placedName == consumableDef.name then "placed" else "placed " .. _placedName,
 					hiddenPlacement = placed.hidden == true }
 				print(string.format("[CommandService] DEPLOY [%s] | %s placed %s at (%d,%d)",
 					consumableDef.name, actor.name, _deployPlan.ref, target.tileX, target.tileY))
@@ -8993,7 +9516,9 @@ function CommandService.ValidateAndCommit(
 				BattleVisualBroadcaster.UnitMoved(u)
 				if ObjectEffectService and ObjectEffectService.GetTriggeredTrapAt then
 					local trap = ObjectEffectService.GetTriggeredTrapAt(state, u.tileX, u.tileY)
-					if trap then ObjectEffectService.TriggerTrap(u, trap, state, state.units) end
+					if trap then springTrap(u, trap, state) end  -- BUG-247: a trap KO here is a real KO
+					-- BUG-263 (batch 21b, Studio pass 12): a unit this item moved onto a trap that KO'd it credits the item user.
+					if trap and u ~= actor and u.isAlive == false then u._killedBy = u._killedBy or actor.id end
 				end
 				if u.isAlive then applyForcedEntryEffects(u, { pushed = true }) end
 			end
@@ -9392,8 +9917,10 @@ function CommandService.ValidateAndCommit(
 				local sy = (actor.tileY > ty) and 1 or ((actor.tileY < ty) and -1 or 0)
 				local d0 = math.max(math.abs(actor.tileX - tx), math.abs(actor.tileY - ty))
 				local moved = false
+				-- BUG-177 (batch 14, core_stats 55): a boss is never pulled (same rule as every push / pull).
+				local _winchBoss = GameConstants.IsBoss(target)
 				for _, st in ipairs({ { sx, sy }, { sx, 0 }, { 0, sy } }) do
-					if not moved and (st[1] ~= 0 or st[2] ~= 0) then
+					if not moved and not _winchBoss and (st[1] ~= 0 or st[2] ~= 0) then
 						local nx, ny = tx + st[1], ty + st[2]
 						local nd = math.max(math.abs(actor.tileX - nx), math.abs(actor.tileY - ny))
 						if nd < d0 and nd >= 1 and _freeTile(nx, ny) then
@@ -9405,7 +9932,8 @@ function CommandService.ValidateAndCommit(
 				if moved then _landOn(target) end
 				effectResult = { effectType = moved and "Pull" or "PullFailed", amount = moved and 1 or 0,
 					description = moved and (consumableDef.name .. " pulled " .. (target.name or "target"))
-						or (consumableDef.name .. " found no legal tile") }
+						or (if _winchBoss then ((target.name or "Target") .. " cannot be pulled")
+							else (consumableDef.name .. " found no legal tile")) }
 				print(string.format("[CommandService] ITEM WINCH [%s] | %s -> %s | %s",
 					consumableDef.name, actor.name, target.name or "?", moved and "MOVED" or "NO LEGAL TILE"))
 			elseif _climbPlan and type(target) == "table" and target.isAlive and not target.isGroundTarget then
@@ -9548,7 +10076,7 @@ function CommandService.ValidateAndCommit(
 					BattleVisualBroadcaster.UnitMoved(actor)
 					if ObjectEffectService and ObjectEffectService.GetTriggeredTrapAt then
 						local trap = ObjectEffectService.GetTriggeredTrapAt(state, tx, ty)
-						if trap then ObjectEffectService.TriggerTrap(actor, trap, state, state.units) end
+						if trap then springTrap(actor, trap, state) end  -- BUG-247: a trap KO here is a real KO
 					end
 					if actor.isAlive then applyForcedEntryEffects(actor, { pushed = true }) end
 				end
@@ -9568,7 +10096,10 @@ function CommandService.ValidateAndCommit(
 					for _, u in ipairs({ actor, target }) do
 						if u.isAlive and ObjectEffectService and ObjectEffectService.GetTriggeredTrapAt then
 							local trap = ObjectEffectService.GetTriggeredTrapAt(state, u.tileX, u.tileY)
-							if trap then ObjectEffectService.TriggerTrap(u, trap, state, state.units) end
+							if trap then springTrap(u, trap, state) end  -- BUG-247: a trap KO here is a real KO
+							-- BUG-263 (batch 21b, Studio pass 12): a unit the swap put on a trap that KO'd it credits the item
+							-- user (a skill-placed trap's caster keeps the credit, as on a push, BUG-248).
+							if u ~= actor and u.isAlive == false then u._killedBy = u._killedBy or actor.id end
 						end
 						if u.isAlive then applyForcedEntryEffects(u, { pushed = true }) end
 					end
@@ -9927,14 +10458,73 @@ end
 -- the Output, under this module's tag (LOG-001 / LOG-002), so a silent re-prompt can be traced.
 -- Thin wrapper: the validation itself is unchanged and the result is passed straight through.
 local _validateAndCommitImpl = CommandService.ValidateAndCommit
+
+-- BUG-154 (batch 12): a short reason CODE for a refused command (loadout_ui_spec 131). The texts live in
+-- GameConstants.REJECT_TEXT (client side); the server only classifies its own refusal strings here, in one
+-- ordered list. nil = no code (nothing is shown, same as before).
+local REJECT_PATTERNS = table.freeze({
+	{ "Silence prevents", "sil" },
+	{ " prevents ", "blk" }, { "is Pinned and can't", "blk" }, { "is Taunted", "blk" }, { "Phase Locked", "blk" },
+	{ "no AP remaining", "ap" }, { "enough AP", "ap" },
+	{ "enough MP", "mp" }, { "MP insufficient", "mp" },
+	{ "is not reachable", "tile" }, { "A unit is standing there", "tile" }, { "free tile", "tile" },
+	{ "Pick a ", "tile" }, { "lunge onto", "tile" }, { "requires a target location", "tile" },
+	{ "requires a target tile", "tile" }, -- Tester batch 12 W1 (BUG-164): before "arget" (object attack / push)
+	{ "arget", "tgt" }, { "out of range", "tgt" }, { "out of attack range", "tgt" }, { "too close", "tgt" }, { "Cannot attack an ally", "tgt" },
+	{ "out of reach", "tgt" }, { "exactly 2 tiles away", "tgt" }, { "No room to strike", "tgt" },
+})
+function CommandService.ClassifyReject(reason: any): string?
+	if type(reason) ~= "string" then return nil end
+	for _, p in ipairs(REJECT_PATTERNS) do
+		if string.find(reason, p[1], 1, true) then return p[2] end
+	end
+	return nil
+end
+
+-- Last refusal per actor id, taken (and cleared) by the next turn prompt of that actor.
+local _lastRejectCode: { [string]: string } = {}
+function CommandService.TakeRejectCode(actorId: any): string?
+	if type(actorId) ~= "string" then return nil end
+	local code = _lastRejectCode[actorId]
+	_lastRejectCode[actorId] = nil
+	return code
+end
+-- Tester batch 12 W1 (BUG-164): forget every stored refusal code; called at battle start (Main).
+function CommandService.ClearRejectCodes()
+	table.clear(_lastRejectCode)
+end
+
 function CommandService.ValidateAndCommit(state: any, actorId: any, actionType: any, selection: any): (boolean, any)
+	-- BUG-126: clear the "action voided" mark (lethal Wounded at commit) before every command.
+	-- BUG-284 (batch 26): also clear every unit's KO-floor marker (UnitSchema.Kill _koFloorCause), so a hit
+	-- line of THIS command never borrows "kept at 1 HP by ..." from an earlier command's hit. A bundled second
+	-- Item (AC-020) is part of the same action, so it keeps them.
+	local _keepKoFloor = type(selection) == "table" and selection._bundled == true
+	if state and state.units then
+		for _, u in ipairs(state.units) do
+			if not _keepKoFloor then u._koFloorCause = nil end
+			if u.id == actorId then
+				u._actionVoided = nil
+			end
+		end
+	end
 	local ok, reason = _validateAndCommitImpl(state, actorId, actionType, selection)
+	-- BUG-154: remember (or clear) this actor's refusal code for its next turn prompt.
+	if type(actorId) == "string" then
+		_lastRejectCode[actorId] = if ok then nil else CommandService.ClassifyReject(reason)
+	end
 	if not ok and (actionType == "Attack" or actionType == "AttackObject") then
 		local targetName = type(selection) == "table" and (selection.name or selection.id
 			or (selection.objX and `obj:{selection.objX},{selection.objY}`)) or tostring(selection)
 		warn(`[CommandService] Attack rejected: {tostring(reason)} (actor {tostring(actorId)}, target {tostring(targetName)})`)
 	end
 	return ok, reason
+end
+
+-- BUG-126: true when the unit's last committed command was cancelled by a lethal Wounded tick
+-- (elements_statuses 56: "If it is lethal the action does not happen").
+function CommandService.WasActionVoided(unit: any): boolean
+	return type(unit) == "table" and unit._actionVoided == true
 end
 
 --------------------------------------------------
@@ -10088,7 +10678,15 @@ do
 			local endGuardTurn = false
 			for _, u in ipairs((state and state.units) or {}) do
 				if u.isAlive and UnitSchema.IsGodProtected(u) then
+					local _apBefore = u.currentAp or 0
 					UnitSchema.GodRefill(u, true)
+					-- BUG-210 (batch 17, Studio pass 6): the re-prompt after a 1-AP action printed "AP:2" right after the
+					-- action's "AP left:1". The prompt reads the unit's real AP; this god-mode refill had raised it back to 2
+					-- without a word. Say so, so the server output matches what the unit really has.
+					if u.id == actorIdArg and (u.currentAp or 0) ~= _apBefore then
+						print(string.format("[Dev] God mode: %s AP %d -> %d (refilled after %s)",
+							tostring(u.name), _apBefore, u.currentAp or 0, tostring(actionTypeArg)))
+					end
 					-- Guard ends the turn under god mode (unlimited AP would otherwise keep it open).
 					if results[1] and actionTypeArg == "Guard" and u.id == actorIdArg then
 						u.currentAp = 0

@@ -244,6 +244,10 @@ local function makeTile(parent: Instance, mi: any, x: number, t: number)
 		corner(dim, 4)
 		dim.Parent = face
 	end
+	-- PT-15 (batch 8): red low-HP band (deployment readiness style, persistent_hp_mp_rules 24).
+	if UIComponents and UIComponents.ApplyLowHpMark then
+		UIComponents.ApplyLowHpMark(face, mi.hp, mi.maxHp)
+	end
 	face.Parent = tile
 
 	makeBar(tile, t + 2, t, mi.hp, mi.maxHp, Theme.Colors.HP)

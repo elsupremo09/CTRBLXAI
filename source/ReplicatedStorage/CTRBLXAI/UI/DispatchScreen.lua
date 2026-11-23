@@ -152,13 +152,23 @@ local TEXT = {
 	unitCount = function(n: number): string return `{n} unit(s)` end, -- reused pattern (RT-19)
 }
 
--- "{h}h {m}m", minutes rounded up, "0h" dropped ("45m"); at least "1m".
-local function fmtDuration(secs: number): string
-	local mins = math.max(1, math.ceil(math.max(0, secs) / 60))
+-- "{h}h {m}m" from whole minutes, "0h" dropped ("45m").
+local function fmtMinutes(mins: number): string
 	local h, m = mins // 60, mins % 60
 	if h == 0 then return `{m}m` end
 	if m == 0 then return `{h}h` end
 	return `{h}h {m}m`
+end
+
+-- Time left / per-unit times: minutes rounded up, at least "1m".
+local function fmtDuration(secs: number): string
+	return fmtMinutes(math.max(1, math.ceil(math.max(0, secs) / 60)))
+end
+
+-- BUG-111: elapsed time ("Waiting"): minutes rounded DOWN, the same rounding as the Earning
+-- meter (rtMeter), so the two never differ by a minute side by side; still at least "1m".
+local function fmtElapsed(secs: number): string
+	return fmtMinutes(math.max(1, math.floor(math.max(0, secs) / 60)))
 end
 
 -- Percentage with at most one decimal ("0.8", "1", "1.2").
@@ -399,16 +409,34 @@ end
 -- "Earned so far: +{xp} EXP · +{n} {Material}" from the server preview (whole numbers only). Same rule
 -- as earnedLine: the EXP part is left out when 0 and material was earned; a material-only mission with
 -- nothing yet shows "+0 {Material}" (not "+0 EXP", it can never earn EXP).
+-- Batch 8 (2026-11-22): ticks while the screen is open, display only, between server answers. Material
+-- = the same carried fraction + rate formula as "Next {Material} in" (nextUnitText). EXP = each unit's
+-- server rate for the hour now running (earnedSoFar.units[i][3]), only up to xpRateUntilSeconds, so it
+-- never shows more than the server pays (it only rounds down). Every server answer resets it (rtAt).
 local function earnedSoFarText(m: any): string?
 	local e = m.earnedSoFar
 	if type(e) ~= "table" then return nil end
+	local earned = liveTimes(m)
+	local srvEarned = tonumber(m.earnedSeconds) or 0
+	local xpUntil = math.max(srvEarned, tonumber(m.xpRateUntilSeconds) or srvEarned)
+	local xpDt = math.max(0, math.min(earned, xpUntil) - srvEarned)
 	local xp = 0
 	for _, pair in e.units or {} do
-		xp += math.max(0, math.floor(tonumber(if type(pair) == "table" then pair[2] else 0) or 0))
+		if type(pair) == "table" then
+			local base = math.max(0, math.floor(tonumber(pair[2]) or 0))
+			local perHour = math.max(0, tonumber(pair[3]) or 0)
+			xp += base + math.floor(perHour * xpDt / 3600)
+		end
 	end
 	local n = math.max(0, math.floor(tonumber(e.amount) or 0))
 	local mat = e.material
 	local isMat = type(mat) == "string" and mat ~= "none"
+	local matRate = tonumber(m.matPerHour) or 0
+	if isMat and matRate > 0 and earned > srvEarned then
+		local frac = math.clamp(tonumber(m.matFrac) or 0, 0, 0.999999)
+		local have = frac + matRate * earned / 3600
+		n = math.max(n, math.floor(have - 1e-6))
+	end
 	local matOnly = isMat and m.noExp == true
 	local parts: { string } = {}
 	if xp > 0 or (n == 0 and not matOnly) then table.insert(parts, `+{xp} EXP`) end
@@ -1386,11 +1414,12 @@ local function buildMissionPanel(parent: Instance, m: any, st: any)
 	-- 2026-11-21: Waiting (true time since the last collect), Full in / full sentence, earned so far
 	-- (server preview, whole numbers), items note. Display only.
 	local waiting, fullIn = liveWait(m)
-	local waitLine = addLine(panel, 6, rtWaiting(fmtDuration(waiting)), small, sec)
+	local waitLine = addLine(panel, 6, rtWaiting(fmtElapsed(waiting)), small, sec)
 	local fullLine = addLine(panel, 7, if full then TXT_FULL_STOPPED else rtFullIn(fmtDuration(fullIn)), small,
 		if full then Theme.Colors.TextGold else sec, full)
 	local soFar = earnedSoFarText(m)
-	if soFar then addLine(panel, 8, soFar, small, Theme.Colors.TextPrimary, true) end
+	local soFarLine: TextLabel? = nil
+	if soFar then soFarLine = addLine(panel, 8, soFar, small, Theme.Colors.TextPrimary, true) end
 	addLine(panel, 9, TXT_ITEMS_AT_COLLECT, small, sec)
 	-- "Minimum {h}h" (RT-05) until the tier minimum has passed.
 	local minH = math.floor((tonumber(m.minSeconds) or 0) / 3600 + 0.5)
@@ -1419,13 +1448,13 @@ local function buildMissionPanel(parent: Instance, m: any, st: any)
 	})
 	row.Parent = panel
 	table.insert(liveRows, { m = m, meter = meter, nextLine = nextLine, fill = fill, full = full, minOk = minOk,
-		waitLine = waitLine, fullLine = fullLine })
+		waitLine = waitLine, fullLine = fullLine, soFarLine = soFarLine })
 	panel.Parent = parent
 end
 
 -- Missions tab row status: "Waiting {dur}  ·  Full in {dur}", or "Full" (RT-02) once full.
 local function rowStatusText(waiting: number, fullIn: number, full: boolean): string
-	return `{rtWaiting(fmtDuration(waiting))}  ·  {if full then TXT_FULL else rtFullIn(fmtDuration(fullIn))}`
+	return `{rtWaiting(fmtElapsed(waiting))}  ·  {if full then TXT_FULL else rtFullIn(fmtDuration(fullIn))}`
 end
 
 -- Missions tab (2026-11-21): every mission out. Tier name + yield icon, portraits (3 + "+N", D1),
@@ -1734,9 +1763,13 @@ local function startTicker()
 					if r.isRow then
 						r.waitLine.Text = rowStatusText(waiting, fullIn, full)
 					else
-						r.waitLine.Text = rtWaiting(fmtDuration(waiting))
+						r.waitLine.Text = rtWaiting(fmtElapsed(waiting))
 						if r.fullLine and r.fullLine.Parent and not full then r.fullLine.Text = rtFullIn(fmtDuration(fullIn)) end
 					end
+				end
+				if r.soFarLine and r.soFarLine.Parent then -- batch 8: "Earned so far" ticks (display only)
+					local so = earnedSoFarText(r.m)
+					if so then r.soFarLine.Text = so end
 				end
 			end
 			if not changed and rtCache and type(rtCache.missions) == "table" then

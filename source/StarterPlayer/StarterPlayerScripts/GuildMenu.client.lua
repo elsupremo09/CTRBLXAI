@@ -907,6 +907,9 @@ local function refreshOverview()
 	local res = call(GuildEvents.GetGuildOverview)
 	if not res then return end
 	lastOverview = { gold = res.gold or 0, resources = res.resources or {} }
+	-- BUG-108 (PT-13): approved away text while an unfinished dungeon run holds units (else nil).
+	local lo: any = lastOverview
+	lo.dungeonRunText = if res.dungeonRun == true and type(res.dungeonRunText) == "string" then res.dungeonRunText else nil
 	updateBalanceLabel()
 	updateRenownHeader(res.renown)
 	applyGuildIdentity(res.identity) -- guild name + emblem (2026-11-18)
@@ -1952,6 +1955,7 @@ if DungeonScreen then
 		onClosed = function()
 			returnToDungeon = false
 			screenGui.Enabled = true
+			refreshOverview() -- BUG-108 (PT-13): a run started/ended on the Dungeon screen updates the Dungeon mark
 			updateBalanceLabel()
 			showPage(currentPage) -- Home (user 2026-11-18 1:32 AM)
 		end,
@@ -2426,20 +2430,49 @@ local homeButtons: { GuiButton } = {} -- the Home page grid buttons (also in nav
 -- "New" marks shared by the nav and the Home grid (user 2026-11-18 8:44 AM): one source of truth.
 local newPages: { [string]: boolean } = {} -- page -> has a "New" mark (from the server building state)
 local homeNewLabels: { [string]: TextLabel } = {} -- Home grid marks (rebuilt every Home visit)
-local function makeNewMark(btn: GuiButton): TextLabel
+-- runText (BUG-108, PT-13): same gold mark, named "RunMark", carrying the approved "Exploring a
+-- dungeon" text (sent by the server) while an unfinished dungeon run holds units away. Wider and
+-- wrapped to two lines so it fits beside the button label. Replaces the "New" mark on that button.
+-- BUG-112 (PT-13): the RunMark is wide enough to sit under the button label, so while it is shown
+-- the label's box ends RUN_MARK_GAP px before the mark (the label text then fits beside it, like
+-- "Dungeon" beside the short "New" mark). The label's own size is restored when the mark goes.
+local MARK_EDGE_PX, RUN_MARK_W, NEW_MARK_W, RUN_MARK_GAP = 8, 64, 34, 6
+local function setRunMarkLabelGap(btn: GuiButton, on: boolean)
+	local lbl = btn:FindFirstChild("Label")
+	if not (lbl and lbl:IsA("GuiObject")) then return end
+	local saved = lbl:GetAttribute("SizeBeforeRunMark")
+	if on then
+		if typeof(saved) ~= "UDim2" then
+			saved = lbl.Size
+			lbl:SetAttribute("SizeBeforeRunMark", saved)
+		end
+		local right = lbl.Position.X.Offset + MARK_EDGE_PX + RUN_MARK_W + RUN_MARK_GAP
+		lbl.Size = UDim2.new(1 - lbl.Position.X.Scale, -right, saved.Y.Scale, saved.Y.Offset)
+	elseif typeof(saved) == "UDim2" then
+		lbl.Size = saved
+		lbl:SetAttribute("SizeBeforeRunMark", nil)
+	end
+end
+local function makeNewMark(btn: GuiButton, runText: string?): TextLabel
 	local n = Instance.new("TextLabel")
-	n.Name = "NewMark"
-	n.Text = "New"
+	n.Name = if runText then "RunMark" else "NewMark"
+	n.Text = runText or "New"
 	n.Font = Theme.Font.PrimaryBold
 	n.TextSize = Theme.Text.Small()
 	n.TextColor3 = Theme.Colors.TextGold
 	n.BackgroundTransparency = 1
 	n.AnchorPoint = Vector2.new(1, 0.5)
-	n.Position = UDim2.new(1, -8, 0.5, 0)
-	n.Size = UDim2.new(0, 34, 1, 0)
+	n.Position = UDim2.new(1, -MARK_EDGE_PX, 0.5, 0)
+	n.Size = UDim2.new(0, if runText then RUN_MARK_W else NEW_MARK_W, 1, 0)
+	n.TextWrapped = runText ~= nil
 	n.TextXAlignment = Enum.TextXAlignment.Right
 	n.ZIndex = btn.ZIndex + 1
 	n.Parent = btn
+	if runText then
+		local nm = btn:FindFirstChild("NewMark")
+		if nm and nm:IsA("GuiObject") then nm.Visible = false end
+		setRunMarkLabelGap(btn, true)
+	end
 	return n
 end
 
@@ -2506,6 +2539,11 @@ local function pageHome()
 		registerNav(btn, page) -- same Disabled / lock handling as the nav buttons (applyNavLocks)
 		table.insert(homeButtons, btn)
 		if newPages[page] and not lockedPages[page] then homeNewLabels[page] = makeNewMark(btn) end
+		-- BUG-108 (PT-13): Dungeon button shows the approved away text while a run is unfinished.
+		local runText = (lastOverview :: any).dungeonRunText
+		if page == "Dungeon" and type(runText) == "string" and not lockedPages[page] then
+			makeNewMark(btn, runText)
+		end
 		if lockedPages[page] then -- approved lock line on tap (rank text 12), like the nav
 			local c = Instance.new("TextButton")
 			c.Name = "LockCatcher"
@@ -2922,6 +2960,20 @@ applyNavLocks = function(state: any)
 		elseif not hasNew and marks[page] then
 			marks[page]:Destroy()
 			marks[page] = nil
+		end
+		-- BUG-108 (PT-13): unfinished dungeon run -> approved "Exploring a dungeon" mark on the
+		-- Dungeon button (nav + Home); removed when the run ends. It hides the "New" mark there.
+		if page == "Dungeon" then
+			local runText = (lastOverview :: any).dungeonRunText
+			local runMark = btn:FindFirstChild("RunMark")
+			local showRun = type(runText) == "string" and not lockedPages[page]
+			if showRun and not runMark then makeNewMark(btn, runText)
+			elseif not showRun and runMark then
+				runMark:Destroy()
+				setRunMarkLabelGap(btn, false)
+			end
+			local nm = btn:FindFirstChild("NewMark")
+			if nm and nm:IsA("GuiObject") then nm.Visible = not showRun end
 		end
 	end
 	styleNav()

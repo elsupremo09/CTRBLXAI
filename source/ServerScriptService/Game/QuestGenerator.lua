@@ -472,6 +472,11 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 	local slotOptions = QUEST_PLAYER_SLOTS[questType]
 	-- The quest's normal deploy slots at every Rank (game_flow 42, 5:52 PM: no units-owned cap).
 	local playerSlots = pickRandom(rng, slotOptions)
+	-- BUG-124 (BUG-HUNT-02): a dungeon room deploys a fixed 7 (project_rules 265). The draw above
+	-- still runs so every later roll for the same seed is unchanged; only the value is replaced.
+	if opts and opts.playerSlots then
+		playerSlots = opts.playerSlots
+	end
 
 	-- 8. Enemy roster
 	local enemyTypes = {}
@@ -516,7 +521,9 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 	-- the same single NextNumber draw; the numbers live in RenownRules.Data (DAT-001). Goal extras
 	-- are trimmed back inside this target after the goal roll (step 13b).
 	local countRoll = rng:NextNumber()
-	local enemyTarget = RenownRules.EnemyCountTarget(gate and gate.rank, playerSlots, countRoll)
+	-- BUG-142: dungeon rooms pass their own multiplier (DungeonRules.Data via the room spec); nil = quests.
+	local enemyTarget = RenownRules.EnemyCountTarget(gate and gate.rank, playerSlots, countRoll,
+		opts and opts.enemyMultMin, opts and opts.enemyMultSpan)
 
 	if totalEnemyCount < enemyTarget then
 		-- Pad with Grunts up to target.
@@ -748,6 +755,8 @@ function QuestGenerator.GenerateDungeonBattle(spec)
 		difficulty = spec.difficulty, fixedLevel = spec.level,
 		goal = "WipeOut", -- dungeon rooms keep today's win rule (build step 1 default)
 		noPromisedGear = true, -- dungeon rooms never get promised gear (game_flow 36)
+		playerSlots = spec.deploySlots, -- BUG-124: 7 per room (rule 265); nil = old random slots
+		enemyMultMin = spec.enemyMultMin, enemyMultSpan = spec.enemyMultSpan, -- BUG-142: dungeon x1.7-2.1
 	})
 	quest.id = "dungeon_" .. tostring(spec.nodeId)
 	quest.isDungeon = true

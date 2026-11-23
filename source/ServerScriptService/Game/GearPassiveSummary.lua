@@ -210,4 +210,22 @@ function GearPassiveSummary.Build(unit: any): { any }
 	return groups
 end
 
+-- BUG-106 (2026-11-21): every built-in passive of a weapon / off-hand archetype, in order
+-- (nativePassiveId, then nativeExtraPassiveIds), as { id, name, desc } for item popups. nil if none.
+function GearPassiveSummary.NativePassiveList(arch: any): { any }?
+	if type(arch) ~= "table" then return nil end
+	local out = {}
+	local function push(key)
+		if key then
+			table.insert(out, { id = key, name = GearPassiveSummary.NativePassiveName(key),
+				desc = WeaponData.GetPassiveDesc(key) or "" })
+		end
+	end
+	push(arch.nativePassiveId)
+	if type(arch.nativeExtraPassiveIds) == "table" then
+		for _, k in ipairs(arch.nativeExtraPassiveIds) do push(k) end
+	end
+	return if #out > 0 then out else nil
+end
+
 return GearPassiveSummary

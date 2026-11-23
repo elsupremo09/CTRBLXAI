@@ -291,7 +291,9 @@ end
 
 --- Static walk graph. Standability and legal directions never change while
 --- ramps regrade elevation, so only the elevation check is done live.
-local function buildWalkGraph(tiles, w, h)
+--- obsByMarker (BUG-109, FeaturePass guard): before Phase 2b flags isObstacle, treat OBS-marker
+--- tiles as the obstacles they become (wall, and corner blocker since the form is not rolled yet).
+local function buildWalkGraph(tiles, w, h, obsByMarker)
 	local n = w * h
 	local stand, blocker, tileOf, isKey = {}, {}, {}, {}
 	local pdList = {}
@@ -300,9 +302,10 @@ local function buildWalkGraph(tiles, w, h)
 			local i = (y - 1) * w + x
 			local t = tiles[y][x]
 			tileOf[i] = t
-			blocker[i] = t.isObstacle == true and t.obsForm ~= "spike" -- W2: only object-form OBS seals corners (DB row 77)
+			local isObs = t.isObstacle == true or (obsByMarker == true and t.marker == "OBS")
+			blocker[i] = isObs and t.obsForm ~= "spike" -- W2: only object-form OBS seals corners (DB row 77)
 			local tDef = TerrainData.Types[t.terrain]
-			local ok = not t.isObstacle and not t.isGap
+			local ok = not isObs and not t.isGap
 				and tDef ~= nil and tDef.passable ~= false
 				and t.terrain ~= "Quicksand"
 				and not hasTag(t.terrain, "Molten")
@@ -1151,8 +1154,11 @@ end
 --- Jump-1 walkability of the current map (the same walker Phase 7b repairs
 --- against). Single source for ValidationPass V13. Read-only.
 --- Index of tile (x, y) = (y - 1) * width + x.
-function ElevationPass.AnalyzeWalkability(mapState)
-	local g = buildWalkGraph(mapState.tiles, mapState.width, mapState.height)
+--- opts.obsByMarker (BUG-109): FeaturePass key-tile guard calls this before ElevationPass has
+--- flagged OBS tiles isObstacle; OBS-marker tiles then count as obstacles. nil = unchanged.
+function ElevationPass.AnalyzeWalkability(mapState, opts)
+	local g = buildWalkGraph(mapState.tiles, mapState.width, mapState.height,
+		opts ~= nil and opts.obsByMarker == true)
 	local an = computeGroups(g, computeFlows(g))
 	local oneWay, keyOutside = 0, 0
 	for _, grp in ipairs(an.groups) do

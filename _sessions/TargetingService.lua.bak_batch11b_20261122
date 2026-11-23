@@ -1,0 +1,2449 @@
+
+-- CTRBLXAI | Slice 3 (AOE Patterns + Ally Targeting)
+--
+-- Slice 3 additions:
+--   - GetSkillCandidates: returns valid targets based on skill's targetRules
+--   - GetCleaveTargets: given a primary target + caster, returns all units hit by Cleave
+--   - Ally targeting: skills with "Ally Unit, Self" target rules can target allies or self
+
+local GameConstants = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("CTRBLXAI")
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
+
+local RacePassiveService = require(script.Parent.RacePassiveService)
+local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws Phase 2
+local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
+local WeaponPassiveService = require(script.Parent.WeaponPassiveService) -- ArcaneReach skill-range (2026-10-26)
+local StatCalcService = require(script.Parent.StatCalcService) -- shared stat calculation (2026-10-28)
+local StatusService = require(script.Parent.StatusService)
+-- Map-object Interact eligibility (2026-10-26). One-way require: ObjectEffectService and
+-- everything it loads never require TargetingService, so there is no load cycle.
+local ObjectEffectService = require(script.Parent.ObjectEffectService)
+
+
+local RaceData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
+
+-- OBS object metadata (map_gen_rules rows 82/87-89, 2026-10-12). Used to tell the two
+-- OBS blocker-form objects ("OBS Blocker" / "Ad Billboard") apart from real walls so
+-- flight can pass over them and a high attacker can see over them (see isObsObjectTile).
+local ObjectData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ObjectData")
+)
+
+local TargetingService = {}
+
+--------------------------------------------------------------------
+-- ALL-TILE TARGETING WIDENING (user decision 2026-10-24)
+--------------------------------------------------------------------
+-- Ally-only and enemy-only skills/items widen to target ANY tile (a unit of
+-- any side, or empty ground). Conforms the code to the DB's already-locked
+-- tile/unit targeting model (movement_targeting: "unit selection vs tile
+-- selection", friendly-fire-by-default, state-change fallback to the tile).
+--
+-- RULINGS encoded here:
+--   * Scope: only these allegiance rules widen. Self / Self (Aura) / Self,Allies
+--     (self-radius) / ground / empty-tile / indiscriminate are LEFT AS-IS.
+--   * Heal/buff aimed at an enemy tile genuinely helps that enemy (resolution
+--     already applies to whatever target is passed); fizzles on empty ground.
+--   * CARVE-OUTS: seven unit-referent skills must STAY unit-targeted because they
+--     are meaningless on an empty tile (steal from nothing / swap with nothing /
+--     dash onto nothing / link to nothing). Enforced by skill id + the movement
+--     flags, so they can never be mistaken for a widenable peer sharing their
+--     targetRules string.
+--   * Hide still protects: hidden occupants are skipped by widened targeting
+--     exactly as before (handled at candidate build + resolution).
+--   * Players only: the enemy AI keeps its own side-based targeting (AIService
+--     never calls IsWidenedSkill), so widening changes the player's options only.
+local WIDENABLE_TARGET_RULES = {
+	-- "Any Tile" (DB Target_Rules, user ruling 2026-10-26): the card itself says the skill
+	-- affects whatever is on the tile. The legacy strings below stay for the carve-outs.
+	["Any Tile"]        = true,
+	-- Venom Burst (USER RULING 2026-11-08): aimed like an "Any Tile" skill; its 3x3 comes from Circle1.
+	["Aimed Area (centred on target)"] = true,
+	["Enemy Unit"]      = true,
+	["Ally Unit"]       = true,
+	["Ally Unit, Self"] = true,
+	["Self, Ally Unit"] = true,
+}
+-- Unit-referent carve-outs (stay unit-targeted). Steal/Mug strip a target's
+-- item; Phantom Exchange swaps position with a unit; Life Link binds to a unit;
+-- Skyfall Lance / Reckless Charge dash the caster onto the target's tile.
+-- BUG-134 (2026-11-22, Tester UAT batch 9 advisory): Fated Escape teleports a selected ALLY, so it is
+-- unit-referent too; movement_targeting 80 lists it in this same carve-out list.
+local TILE_TARGETING_CARVEOUTS = {
+	["SKL-STEAL"]            = true,
+	["DOC-THIEF-01"]         = true,  -- Mug
+	["SKL-PHANTOM-EXCHANGE"] = true,
+	["SKL-FATED-ESCAPE"]     = true,  -- movement_targeting 80 (BUG-134)
+	["SKL-LIFE-LINK"]        = true,
+	["SKL-SKYFALL-LANCE"]    = true,
+	["DOC-BERSERKER-01"]     = true,  -- Reckless Charge
+}
+
+-- True when this skill/item should offer and accept any-tile targeting.
+-- nil-safe; false for anything outside the two in-scope allegiance buckets,
+-- for the seven carve-outs, and for any charge/movement/swap skill (belt-and-
+-- suspenders so a future charge skill in an ally/enemy bucket can't leak in).
+function TargetingService.IsWidenedSkill(skillDef)
+	if type(skillDef) ~= "table" then return false end
+	local tr = skillDef.targetRules
+	if not WIDENABLE_TARGET_RULES[tr] then return false end
+	if skillDef.id and TILE_TARGETING_CARVEOUTS[skillDef.id] then return false end
+	if skillDef.isCharge or skillDef.isMovement or skillDef.swapWithTarget then return false end
+	return true
+end
+
+-- BUG-118 (BUG-HUNT-14, 2026-11-22): target rules whose target is a UNIT. A skill with one of these
+-- rules accepts a bare tile (ground marker) only when it is a widened any-tile skill
+-- (IsWidenedSkill). target_validation_pipeline step 1 "Selection type: confirm unit / tile /
+-- object / ground / empty-tile type is permitted -> Invalid target type"; SEC-001 / SEC-002.
+local UNIT_ONLY_TARGET_RULES = {
+	["Enemy"]                       = true,
+	["Enemy Unit"]                  = true,
+	["Ally Unit"]                   = true,
+	["Ally Unit, Self"]             = true,
+	["Self, Ally Unit"]             = true,
+	["Ally Unit, Enemy Unit, Self"] = true,
+	["KO Unit"]                     = true,
+}
+function TargetingService.IsUnitOnlyTargetRule(targetRules: any): boolean
+	return UNIT_ONLY_TARGET_RULES[targetRules or "Enemy Unit"] == true
+end
+
+-- What an any-tile skill is FOR, read from its card tags. Used only to steer AI-driven
+-- units (enemy AI keeps side-based target choice, rulings 2026-10-24 / 2026-10-26):
+--   "harmful"    Direct Damage / Debuff, no Healing   -> hostile units
+--   "beneficial" Healing / Buff / Shield, no Direct Damage / Debuff -> own side
+--   "mixed"      both (e.g. Dark Restoration)          -> any side
+--   "utility"    neither (e.g. Flash Freeze)           -> a tile (ground marker)
+-- Players are never steered: they pick any tile.
+local function skillIntent(skillDef: any): string
+	-- BUG-136 (BUG-HUNT-15, 2026-11-22): a shield grant (isShield: Retribution Shell, Vital Barrier,
+	-- Bastion Projection, Bulwark Field) only helps the unit it lands on. Retribution Shell's
+	-- "Direct Damage" tag is the break retaliation against the ATTACKER, not an effect on the target,
+	-- so it made the skill "mixed" and the enemy AI shielded player units.
+	if skillDef.isShield then
+		return "beneficial"
+	end
+	local harmful, beneficial = false, false
+	for _, tag in ipairs(skillDef.tags or {}) do
+		if tag == "Direct Damage" or tag == "Debuff" then
+			harmful = true
+		elseif tag == "Healing" or tag == "Buff" or tag == "Shield" then
+			beneficial = true
+		end
+	end
+	if harmful and beneficial then
+		return "mixed"
+	elseif harmful then
+		return "harmful"
+	elseif beneficial then
+		return "beneficial"
+	end
+	return "utility"
+end
+
+-- Item (consumable) analogue. Only the ally-only and enemy-only item rules
+-- widen; everything else (Ground, Empty Tile, Self, specialty object/terrain
+-- rules, revive "KO Ally") is handled on its own existing path. Revive items
+-- are widened to KO'd enemies separately in the item-validation code, not here.
+local WIDENABLE_ITEM_RULES = {
+	["Enemy"]        = true,
+	["Ally"]         = true,
+	["Ally or Self"] = true,
+	["Self or Ally"] = true,
+}
+function TargetingService.IsWidenedItemRule(rule)
+	return WIDENABLE_ITEM_RULES[rule] == true
+end
+
+-- Effective Elevation: tile elevation + 5 if unit has Flight status.
+-- DB: "Flight treats unit as Tile Elevation + 5"
+local function getEffectiveElevation(unit)
+	local tileElev = GameConstants.GetElevation(unit.tileX, unit.tileY)
+	if StatusService.HasStatus(unit, "Flight") then
+		return tileElev + 5
+	end
+	return tileElev
+end
+
+-- Melee elevation restriction: melee attacks (range 1-2) limited to ±2 elevation.
+-- Giant race tag overrides to ±5.
+-- DB: "Melee attacks can only target units within +/-2 elevation levels of the attacker.
+--      Giant race tag overrides this to +/-5."
+local function isMeleeElevationLegal(actor, target, attackRange)
+	if not attackRange or attackRange > 2 then return true end -- ranged, no limit
+	local atkElev = getEffectiveElevation(actor)
+	local defElev = GameConstants.GetElevation(target.tileX, target.tileY)
+	local elevDiff = math.abs(atkElev - defElev)
+	-- Giant: ±5
+	local maxDiff = 2
+	-- A Broken Giant loses its reach (user ruling 2026-10-27).
+	local raceEntry = (actor.raceId and not StatusService.IsRacePassiveSuppressed(actor))
+		and RaceData.GetRace(actor.raceId) or nil
+	if raceEntry and raceEntry.tags then
+		for _, tag in ipairs(raceEntry.tags) do
+			if tag == "Giant" then maxDiff = 5; break end
+		end
+	end
+	return elevDiff <= maxDiff
+end
+-- Job 3 (2026-11-09): shared with CommandService's channel-release reach re-check (same rule as the cast).
+TargetingService.IsMeleeElevationLegal = isMeleeElevationLegal
+
+-- [LOG] Targeting debug spam gate (2026-10-16). The per-candidate "REJECTED …
+-- out of range / same side / no LoS" prints and the per-skill header fire once
+-- per (skill × unit) during EVERY AI scoring pass, which on a full board is
+-- thousands of lines per turn and buries real signals (defeats, weather, procs)
+-- in the Output window. They are pure logging — no gameplay effect — so they are
+-- gated behind this flag (default false). Flip to true only when debugging why a
+-- specific target was rejected. GetSkillCandidates still emits ONE summary line
+-- per skill ("N/M targets in range") regardless of this flag.
+local DEBUG_TARGETING = false
+local function debugLog(msg: string)
+	if DEBUG_TARGETING then
+		print(msg)
+	end
+end
+-- BUG-HUNT-05 diagnostic (2026-11-22, no gameplay effect): when true, a PLAYER unit with move range > 0
+-- that gets 0 move candidates warns once per call with each neighbour tile's blocker / terrain /
+-- elevation / occupant data, so a Studio repro shows why it is stuck. Default false.
+local DEBUG_ZERO_MOVES = false
+
+-- Optional: TileEffectService injected at runtime (DI, mirrors CommandService/
+-- BattleCoordinator) so pathfinding can honor active tile-effect move-cost bonuses
+-- (e.g. Tar Pit). Wired in Main.server.lua during init.
+local _tileEffectService = nil
+function TargetingService.SetTileEffectService(tes)
+	_tileEffectService = tes
+end
+
+-- BUG-144 (BUG-HUNT-05, 2026-11-22, accepted): Move refuses a destination the unit could not walk off.
+-- The check is the SAME helper Skyfall Lance landings use (CommandService landingHasWalkExit, BUG-120 /
+-- BUG-130), injected by Main (ARC-004: CommandService already requires this module). nil = no filter.
+local _walkExitCheck: any = nil
+function TargetingService.SetWalkExitCheck(fn)
+	_walkExitCheck = fn
+end
+
+--------------------------------------------------
+-- CONSTANTS
+--------------------------------------------------
+
+local DIRECTIONS = {
+	{ dx =  1, dy =  0, cost = 1.0 },
+	{ dx = -1, dy =  0, cost = 1.0 },
+	{ dx =  0, dy =  1, cost = 1.0 },
+	{ dx =  0, dy = -1, cost = 1.0 },
+	{ dx =  1, dy =  1, cost = 1.5 },
+	{ dx = -1, dy =  1, cost = 1.5 },
+	{ dx =  1, dy = -1, cost = 1.5 },
+	{ dx = -1, dy = -1, cost = 1.5 },
+}
+
+--------------------------------------------------
+-- HELPERS
+--------------------------------------------------
+
+local function getMovementRange(unit)
+	-- One shared calculation (StatCalcService, 2026-10-28): base + race + armor (incl. situational
+	-- FT-011 / FT-012) + trait + status + imposed penalty, min 1. The Info panels call the same
+	-- function, so the panel value and the reachable tiles cannot disagree.
+	return StatCalcService.GetMovementRange(unit, "battle")
+end
+
+local function getJump(unit)
+	-- One shared calculation (StatCalcService, 2026-10-28): base + race + armor + status + trait.
+	return StatCalcService.GetJump(unit, "battle")
+end
+
+local function getDownwardJump(unit)
+	-- HALFLING — Nimble Steps (races row 'Halfling', 2026-10-02): Jump -1 when moving
+	-- to a lower elevation. Only the voluntary-move BFS uses this (forced
+	-- displacement never reads it), so it is voluntary downward movement only.
+	return math.max(0, getJump(unit) + 2 + RacePassiveService.GetDownwardJumpModifier(unit))
+end
+
+local function buildOccupancyMap(units)
+	local map = {}
+	for _, unit in ipairs(units) do
+		if unit.isAlive then
+			local key = unit.tileX .. "," .. unit.tileY
+			map[key] = unit
+		end
+	end
+	return map
+end
+
+local function tileKey(x, y)
+	return x .. "," .. y
+end
+
+local function isInsideMap(x, y, mapWidth, mapHeight)
+	return x >= 1 and x <= mapWidth
+		and y >= 1 and y <= mapHeight
+end
+
+local function chebyshevDistance(ax, ay, bx, by)
+	return math.max(math.abs(ax - bx), math.abs(ay - by))
+end
+
+-- DIAGONAL CORNER-CUTTING (strict, user decision 2026-10-11): a diagonal step is
+-- blocked only when BOTH orthogonal corner tiles it passes between are corner-blockers.
+-- A corner-blocker is a solid wall/object (IsBlocked) OR a standing unit NOT on the
+-- actor's side (enemies/neutrals). Allies NEVER seal a corner (consistent with LoS id 38).
+-- Impassable terrain (e.g. Quicksand) is deliberately NOT a corner-blocker: Quicksand is
+-- deadly-but-enterable terrain by design, not a wall. Occupancy is prebuilt by the caller.
+local function isCornerBlocker(x, y, occupancy, actor)
+	if GameConstants.IsBlocked(x, y) then
+		return true
+	end
+	local occupant = occupancy[x .. "," .. y]
+	if occupant ~= nil and occupant ~= actor and occupant.side ~= actor.side then
+		return true
+	end
+	return false
+end
+
+-- LUNGE STEP / RECOIL HOP (agent default 2026-11-08, vetoable): CommandService uses walking's own
+-- height limits and diagonal corner rule for these one-tile self-moves, so they never disagree with Move.
+-- Rise allowed up to Jump; drop allowed up to the downward jump (Jump + 2, incl. Halfling Nimble Steps).
+function TargetingService.GetWalkJumpLimits(unit: any): (number, number)
+	return getJump(unit), getDownwardJump(unit)
+end
+
+-- True when a one-tile diagonal step from (fromX, fromY) to (toX, toY) passes between two corner-blockers
+-- (wall/object or a non-allied unit), exactly as the walking search refuses it. Straight steps: false.
+function TargetingService.IsDiagonalStepSealed(actor: any, allUnits: any, fromX: number, fromY: number, toX: number, toY: number): boolean
+	if fromX == toX or fromY == toY then return false end
+	local occupancy = buildOccupancyMap(allUnits or {})
+	return isCornerBlocker(toX, fromY, occupancy, actor) and isCornerBlocker(fromX, toY, occupancy, actor)
+end
+
+-- RABBIT FOLK — Hop Step gap tile: a deliberate chasm / gap floor (Slice 5
+-- CHASM_FLOOR_MAP). Blockers (walls / objects) are NOT gaps — a hop never clears
+-- a wall. UPDATED 2026-10-11: Quicksand is no longer a hop gap — it is now passable
+-- deadly terrain (walk onto it and sink), so only true depth-based chasm floors count.
+local function isHopGapTile(x, y)
+	if GameConstants.IsBlocked(x, y) then return false end
+	if GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(x, y) then return true end
+	return false
+end
+
+-- OBS objects (map_gen_rules rows 82 / 87-89, 2026-10-12): the two blocker-form OBS
+-- objects — "OBS Blocker" and "Ad Billboard" — both carry the ObjectData "OBS" tag.
+-- They differ from real walls / Stone Pillars (no "OBS" tag) in two runtime ways:
+--   (G) flight "pass over, never land": a flying mover may TRAVERSE the tile but can
+--       never END on it; walkers stay fully blocked.
+--   (H) direct-LoS: they block direct line of sight, but an attacker 3+ elevation
+--       levels ABOVE the object's tile can see over them (mirrors the enemy-unit LoS
+--       bypass and the elevation convention).
+-- Reuses blocker metadata (GetBlockerData.objectType -> ObjectData tags); invents no
+-- new flag. Returns false for non-blocked tiles and for non-OBS blockers.
+local function isObsObjectTile(x, y)
+	local b = GameConstants.GetBlockerData(x, y)
+	if not b or not b.objectType then return false end
+	local def = ObjectData.Objects[b.objectType]
+	if not def or not def.tags then return false end
+	for _, tag in ipairs(def.tags) do
+		if tag == "OBS" then return true end
+	end
+	return false
+end
+
+-- Cost to ENTER a tile before mover traits (flight / Pathfinder / Bogged Down): base terrain,
+-- then the active tile effect (Tar Pit stores the full cost -> max), a road cut (never below 1),
+-- then an ENV-003 slow zone (+N). One formula (DAT-001) for walking steps and Rabbit Folk hop
+-- landings (user ruling 2026-10-27: the landing tile counts in full).
+local function tileEntryCost(x: number, y: number): number
+	local terrainCost = GameConstants.GetTerrainCost(x, y)
+	if _tileEffectService and _tileEffectService.GetTileEffect then
+		local teff = _tileEffectService.GetTileEffect(x, y)
+		if teff then
+			local edef = GameConstants.TILE_EFFECTS[teff.id]
+			if edef and edef.crossCostBonus then
+				terrainCost = math.max(terrainCost, edef.crossCostBonus)
+			end
+		end
+	end
+	if _tileEffectService and _tileEffectService.GetRoadCut then
+		local cut = _tileEffectService.GetRoadCut(x, y)
+		if cut > 0 and terrainCost > 1 then
+			terrainCost = math.max(1, terrainCost - cut)
+		end
+	end
+	if _tileEffectService and _tileEffectService.GetMoveCostAdd then
+		terrainCost = terrainCost + _tileEffectService.GetMoveCostAdd(x, y)
+	end
+	return terrainCost
+end
+
+--------------------------------------------------
+-- MOVE CANDIDATES (unchanged from Slice 2)
+--------------------------------------------------
+
+function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight)
+	local range      = getMovementRange(actor)
+	-- Move-range breakdown for player units (2026-10-28), to confirm gear bonuses apply in battle.
+	if actor.side == "Player" then
+		local _, mp = StatCalcService.GetMovementRangeParts(actor, "battle")
+		print(`[TargetingService] {actor.name} move range {range} (base {mp.base}, race {mp.race}, armor {mp.armor}, trait {mp.trait}, status {mp.status}, imposed {mp.imposed})`)
+	end
+	local jump       = getJump(actor)
+	local downJump   = getDownwardJump(actor)
+	local occupancy  = buildOccupancyMap(allUnits)
+	local canHop     = RacePassiveService.CanHopGap(actor)  -- Rabbit Folk Hop Step
+	-- Flight (DB status id 83): ignores climb/downward jump limits, terrain movement
+	-- costs and tile bonuses/penalties, and may move OVER occupied tiles (but still
+	-- cannot END on an occupied tile). Permanent for Flying-tag races (e.g. Avian).
+	local hasFlight  = StatusService.HasStatus(actor, "Flight")
+	-- Perks & Flaws (Phase 2b): Pathfinder ignores terrain move-cost (treat as 1.0);
+	-- Bogged Down multiplies terrain cost by +50%. Computed once per pathfind.
+	local traitTerrainIgnore, traitTerrainMult = TraitEffectService.GetTerrainCostModifier(actor)
+	-- FT-004 Pathfinder Boots: ignore extra terrain movement-cost penalties (treat each tile as
+	-- base cost 1.0), same effect as the Pathfinder trait. Computed once per pathfind. Bogged Down
+	-- (traitTerrainMult) is overridden -- "ignore terrain penalties" means they do not apply.
+	local armorTerrainIgnore = ArmorPassiveService.CanIgnoreTerrainCost(actor)
+	-- Amphibious tag (race_tags row 3) and FT-005 Levitation Boots ("ignore effects of Shallow Water,
+	-- Deep Water"): Shallow / Deep Water cost no extra movement (2026-10-29). Only the water's own
+	-- extra cost is removed; tile effects on top (Tar, slow zones) still apply.
+	local waterMoveIgnore = RacePassiveService.HasRaceTag(actor, "Amphibious")
+		or ArmorPassiveService.CanIgnoreWaterEffects(actor)
+	-- FT-020 Phantom Steps: may TRAVERSE enemy-occupied tiles (never LAND on one -- the candidate
+	-- insert below still requires occupant==nil). Each enemy tile stepped THROUGH adds +1 path cost
+	-- (GetMoveThroughEnemyCost; user ruling 2026-10-25, reduced from +2). Flight already crosses enemies
+	-- for free via the hasFlight passable clause, so the surcharge is WAIVED for a flying phantom-stepper
+	-- (user ruling 2026-10-25) -- throughEnemyCost resolves to 0 under Flight. Computed once per pathfind.
+	local canThroughEnemy = ArmorPassiveService.CanMoveThroughEnemies(actor)
+	local throughEnemyCost = (canThroughEnemy and not hasFlight) and ArmorPassiveService.GetMoveThroughEnemyCost(actor) or 0
+	-- FT-018 Rescue Spurs: may END a Move on an ALLY-occupied tile (ally relocates to the rescuer's
+	-- last crossed tile at commit). Lets the candidate-insert below offer an ally tile as a landing
+	-- destination. Computed once per pathfind.
+	local canRescue = ArmorPassiveService.GetMoveRescueConfig(actor) ~= nil
+	-- FT-019 Kick Boots: may END a Move on an ENEMY-occupied tile (knockback resolved at commit).
+	-- Unlike Phantom Steps this is a TERMINAL landing only (cannot path THROUGH enemies). Once/pathfind.
+	local canKick = ArmorPassiveService.GetMoveKickConfig(actor) ~= nil
+
+	local visited    = {}
+	local parent     = {}
+	local candidates = {}
+
+	-- FT-015 Portal Treads: movement type becomes TELEPORT. The unit ignores ALL pathing (walls,
+	-- structural geometry, enemies, objects, elevation) and jumps directly to any standable, unoccupied
+	-- tile within range. Range uses the SAME square (Chebyshev) measure the rest of the game uses for
+	-- adjacency (user ruling 2026-10-25), and `range` already includes FT-015's Movement Range -2 (via
+	-- GetMovementRangeBonus). Hazard tiles (lava/Deep Water/Burning) ARE standable -- a teleporter may
+	-- land on them and their effects then apply normally, exactly as walking there would (user ruling
+	-- 2026-10-25); only hard blockers (IsBlocked walls/objects), impassable terrain, and occupied tiles
+	-- are excluded. path = {} (no tiles are physically crossed) so the move-commit trap-walk never fires
+	-- on a teleport. This REPLACES the BFS for a teleporter (early return).
+	-- Phase Lock (user ruling 2026-10-27): Portal Treads stop teleporting; the wearer walks.
+	if ArmorPassiveService.IsMoveTypeTeleport(actor) and not StatusService.IsRelocationLocked(actor) then
+		local R = math.floor(range)
+		for dy = -R, R do
+			for dx = -R, R do
+				if not (dx == 0 and dy == 0) then
+					local tx, ty = actor.tileX + dx, actor.tileY + dy
+					if isInsideMap(tx, ty, mapWidth, mapHeight)
+						and not GameConstants.IsBlocked(tx, ty)
+						and not GameConstants.IsImpassableTerrain(tx, ty)
+						and occupancy[tileKey(tx, ty)] == nil then
+						table.insert(candidates, {
+							tileX = tx, tileY = ty,
+							pathCost = math.max(math.abs(dx), math.abs(dy)),
+							terrain = GameConstants.GetTerrainId(tx, ty) or "Clear",
+							path = {},
+							isTeleport = true,
+						})
+					end
+				end
+			end
+		end
+		return candidates
+	end
+
+	-- Warden Earthen Resilience (2026-10-28): +1 cost to enter a tile within Range 2 of an active enemy
+	-- Warden (area denial, not terrain, so it also applies to flyers / Pathfinder). Listed once per search.
+	local _enemyWardens = (require :: any)(script.Parent.DoctrinePassiveService).GetActiveEnemyWardens(actor, allUnits)
+	local queue      = { { x = actor.tileX, y = actor.tileY, cost = 0 } }
+	local startKey   = tileKey(actor.tileX, actor.tileY)
+	visited[startKey] = 0
+
+	local head = 1
+	while head <= #queue do
+		local current = queue[head]
+		head = head + 1
+
+		local currentElev = GameConstants.GetElevation(current.x, current.y)
+
+		for _, dir in ipairs(DIRECTIONS) do
+			local nx = current.x + dir.dx
+			local ny = current.y + dir.dy
+
+			if isInsideMap(nx, ny, mapWidth, mapHeight) then
+				local key = tileKey(nx, ny)
+
+				-- Phase 2b (G): flight "pass over, never land" for OBS blocker/billboard
+				-- tiles. When true, this blocked tile is NOT skipped below (flight may
+				-- traverse it) but is also NEVER inserted as a landing candidate. Only
+				-- applies to flying movers; walkers keep the hard IsBlocked skip.
+				local obsPassOver = hasFlight and isObsObjectTile(nx, ny)
+
+				-- Strict diagonal corner-cutting rule (2026-10-11): block a diagonal step
+				-- only if BOTH orthogonal corner tiles are corner-blockers (wall/enemy).
+				local diagonalSealed = false
+				if dir.dx ~= 0 and dir.dy ~= 0 then
+					local cornerAX, cornerAY = current.x + dir.dx, current.y
+					local cornerBX, cornerBY = current.x, current.y + dir.dy
+					if isCornerBlocker(cornerAX, cornerAY, occupancy, actor)
+						and isCornerBlocker(cornerBX, cornerBY, occupancy, actor)
+					then
+						diagonalSealed = true
+					end
+				end
+
+				if diagonalSealed then
+					-- skip: strict corner-cut (both diagonal corners blocked)
+				elseif GameConstants.IsBlocked(nx, ny) and not obsPassOver then
+				-- skip (hard wall / spike / non-OBS blocker; or a walker vs an OBS tile)
+			elseif GameConstants.IsImpassableTerrain(nx, ny) then
+				-- skip (Quicksand etc.)
+				else
+					-- Base terrain + Tar Pit (full cost, max) + road cut + ENV-003 slow (shared helper).
+					local terrainCost = tileEntryCost(nx, ny)
+					if waterMoveIgnore then
+						local _tid = GameConstants.GetTerrainId(nx, ny)
+						if _tid == "Shallow Water" or _tid == "Deep Water" then
+							terrainCost = math.max(1, terrainCost - math.max(0, GameConstants.GetTerrainCost(nx, ny) - 1))
+						end
+					end
+					-- Flight ignores terrain movement costs and tile bonuses/penalties (DB id 83).
+					-- Perks & Flaws (Phase 2b): Pathfinder ignores terrain cost; Bogged Down +50%.
+					if hasFlight then
+						terrainCost = 1.0
+					elseif traitTerrainIgnore then
+						terrainCost = 1.0
+					elseif armorTerrainIgnore then
+						terrainCost = 1.0
+					else
+						terrainCost = terrainCost * traitTerrainMult
+					end
+					local stepCost = dir.cost * terrainCost
+					-- FT-020 Phantom Steps: moving THROUGH an enemy-occupied tile adds the through-cost (+1).
+					-- Added to this step BEFORE the range check so a phantom path is costed correctly.
+					if canThroughEnemy and throughEnemyCost > 0 then
+						local _oc = occupancy[key]
+						if _oc and _oc ~= actor and _oc.side ~= actor.side then
+							stepCost = stepCost + throughEnemyCost
+						end
+					end
+					if #_enemyWardens > 0 then
+						for _, _w in ipairs(_enemyWardens) do
+							if math.max(math.abs(_w.tileX - nx), math.abs(_w.tileY - ny)) <= 2 then
+								stepCost = stepCost + 1
+								break
+							end
+						end
+					end
+					local newCost  = current.cost + stepCost
+					-- Terrain move costs may be fractional (e.g. Swamp/Deep Water 1.5 after the
+					-- Sep 28 2026 halving). A tile is reachable when its EXACT accumulated path
+					-- cost is within range — no per-tile or per-total rounding (user clarified
+					-- Sep 28 2026: fractional costs must not inflate a tile's cost). e.g. range 3
+					-- reaches two 1.5 tiles (3.0) OR one 1.5 + one 1.0 (2.5), etc.
+					if newCost <= range
+						and (visited[key] == nil or visited[key] > newCost)
+					then
+						local nextElev = GameConstants.GetElevation(nx, ny)
+						local elevDiff = nextElev - currentElev
+
+						local elevLegal = true
+						if not hasFlight then
+							-- Flight ignores climb/downward jump limits (DB id 83).
+							if elevDiff > 0 then
+								elevLegal = elevDiff <= jump
+							elseif elevDiff < 0 then
+								elevLegal = math.abs(elevDiff) <= downJump
+							end
+						end
+
+						if elevLegal then
+							local occupant = occupancy[key]
+							-- Flight may move OVER any occupied tile (ally or enemy); normal units
+							-- may only pass through same-side units. Ending on an occupied tile is
+							-- still forbidden for everyone (candidate insert requires occupant==nil).
+							local passable = (occupant == nil)
+								or hasFlight
+								or (occupant ~= actor and occupant.side == actor.side)
+								-- FT-020 Phantom Steps: traverse (not land on) enemy-occupied tiles.
+								or (canThroughEnemy and occupant ~= actor and occupant.side ~= actor.side)
+
+							if passable then
+								visited[key] = newCost
+								parent[key] = tileKey(current.x, current.y)
+
+								-- "never land": an OBS pass-over tile is traversed (queued
+								-- below) but is never a valid landing candidate.
+								if occupant == nil and not obsPassOver then
+									table.insert(candidates, {
+										tileX = nx, tileY = ny, pathCost = newCost
+									})
+								elseif canRescue and not obsPassOver and occupant ~= actor
+									and occupant.side == actor.side then
+									-- FT-018 Rescue Spurs: an ally tile is a valid landing (swap resolved at commit).
+									table.insert(candidates, {
+										tileX = nx, tileY = ny, pathCost = newCost, isRescue = true
+									})
+								end
+
+								table.insert(queue, { x = nx, y = ny, cost = newCost })
+						elseif canKick and not obsPassOver and occupant ~= actor
+								and occupant.side ~= actor.side then
+								-- FT-019 Kick Boots: an ENEMY tile is a TERMINAL landing candidate -- the kicker may
+								-- END its Move on it (knockback at commit) but may NOT path THROUGH it, so visit +
+								-- offer it as a candidate and deliberately do NOT queue it for further expansion.
+								if visited[key] == nil or visited[key] > newCost then
+									visited[key] = newCost
+									parent[key] = tileKey(current.x, current.y)
+									table.insert(candidates, {
+										tileX = nx, tileY = ny, pathCost = newCost, isKick = true
+									})
+								end
+							end
+						end
+					end
+				end
+			end
+
+			-- RABBIT FOLK — Hop Step (races row 'Rabbit Folk', 2026-10-02): hop a SINGLE
+			-- gap/pit tile in a straight (cardinal) line, ignoring that tile's elevation,
+			-- landing on the tile immediately past it. Guards that keep the Slice 5
+			-- chasm / chokepoint system intact:
+			--   * take-off tile must NOT itself be a gap tile (no chaining inside a chasm)
+			--   * landing tile must NOT be a gap tile (gap wider than 1 tile -> no hop)
+			--   * |landing elev - take-off elev| <= Jump (no free cliff-scaling)
+			--   * landing tile not blocked / impassable; normal range + occupancy rules
+			if canHop and (dir.dx == 0 or dir.dy == 0) and not isHopGapTile(current.x, current.y) then
+				local gx, gy = current.x + dir.dx, current.y + dir.dy
+				local lx, ly = current.x + 2 * dir.dx, current.y + 2 * dir.dy
+				if isInsideMap(gx, gy, mapWidth, mapHeight)
+					and isInsideMap(lx, ly, mapWidth, mapHeight)
+					and isHopGapTile(gx, gy)
+					and not isHopGapTile(lx, ly)
+					and not GameConstants.IsBlocked(lx, ly)
+					and not GameConstants.IsImpassableTerrain(lx, ly)
+				then
+					local landElev = GameConstants.GetElevation(lx, ly)
+					local gapOcc = occupancy[tileKey(gx, gy)]
+					local gapClear = (gapOcc == nil) or (gapOcc ~= actor and gapOcc.side == actor.side)
+					if gapClear and math.abs(landElev - currentElev) <= jump then
+						-- User ruling 2026-10-27: the landing tile counts in full (Tar Pit, road, slow).
+						local hopCost = current.cost + 1.0 + tileEntryCost(lx, ly)
+						local lkey = tileKey(lx, ly)
+						if hopCost <= range and (visited[lkey] == nil or visited[lkey] > hopCost) then
+							local landOcc = occupancy[lkey]
+							if (landOcc == nil) or (landOcc ~= actor and landOcc.side == actor.side) then
+								visited[lkey] = hopCost
+								parent[lkey] = tileKey(current.x, current.y)
+								if landOcc == nil then
+									table.insert(candidates, { tileX = lx, tileY = ly, pathCost = hopCost })
+								end
+								table.insert(queue, { x = lx, y = ly, cost = hopCost })
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- BUG-121 (BUG-HUNT-06, 2026-11-22): a tile reached again by a cheaper route was inserted a second
+	-- time, so the prompt listed e.g. 17,11(5) and 17,11(4). Keep ONE entry per tile at its final
+	-- (lowest) cost, visited[key]; parent[key] already holds that cheapest route for the path below.
+	do
+		local deduped, seen = {}, {}
+		for _, cand in ipairs(candidates) do
+			local ck = tileKey(cand.tileX, cand.tileY)
+			if not seen[ck] and cand.pathCost == visited[ck] then
+				seen[ck] = true
+				table.insert(deduped, cand)
+			end
+		end
+		candidates = deduped
+	end
+
+	-- BUG-144 (BUG-HUNT-05, accepted 2026-11-22): drop a destination the unit could not walk off afterwards
+	-- (e.g. a pit it can drop into, Downward Jump = Jump + 2, but never climb out of). Same check as the
+	-- Skyfall Lance landing (BUG-120 / BUG-130): map geometry only, Flight always passes. A Rabbit Folk
+	-- hopper is not filtered: the check does not model Hop Step exits, so it could refuse a tile the hopper
+	-- can leave. Teleport (Portal Treads) returned above and is unchanged.
+	if _walkExitCheck and not canHop then
+		local kept = {}
+		for _, cand in ipairs(candidates) do
+			if _walkExitCheck(actor, cand.tileX, cand.tileY) then
+				table.insert(kept, cand)
+			end
+		end
+		candidates = kept
+	end
+
+	-- Reconstruct path for each candidate by tracing parent chain
+	for _, cand in ipairs(candidates) do
+		local path = {}
+		local ck = tileKey(cand.tileX, cand.tileY)
+		local pk = parent[ck]
+		while pk and pk ~= startKey do
+			local px, py = pk:match("^(%d+),(%d+)$")
+			px, py = tonumber(px), tonumber(py)
+			local terrain = GameConstants.GetTerrainId(px, py)
+			table.insert(path, 1, { tileX = px, tileY = py, terrain = terrain or "Clear" })
+			pk = parent[pk]
+		end
+		-- Add destination terrain
+		cand.terrain = GameConstants.GetTerrainId(cand.tileX, cand.tileY) or "Clear"
+		cand.path = path
+	end
+
+	if DEBUG_ZERO_MOVES and #candidates == 0 and range > 0 and actor.side == "Player" then
+		local here = GameConstants.GetElevation(actor.tileX, actor.tileY)
+		local parts = {}
+		for dx = -1, 1 do
+			for dy = -1, 1 do
+				local nx, ny = actor.tileX + dx, actor.tileY + dy
+				if (dx ~= 0 or dy ~= 0) and isInsideMap(nx, ny, mapWidth, mapHeight) then
+					table.insert(parts, string.format("(%d,%d) e%d blk=%s imp=%s occ=%s", nx, ny,
+						GameConstants.GetElevation(nx, ny), tostring(GameConstants.IsBlocked(nx, ny)),
+						tostring(GameConstants.IsImpassableTerrain(nx, ny)), tostring(occupancy[tileKey(nx, ny)] ~= nil)))
+				end
+			end
+		end
+		warn(string.format("[TargetingService] DEBUG 0 moves: %s at (%d,%d) e%d range=%s jump=%s down=%s flight=%s | %s",
+			tostring(actor.name), actor.tileX, actor.tileY, here, tostring(range), tostring(jump), tostring(downJump),
+			tostring(hasFlight), table.concat(parts, "; ")))
+	end
+	return candidates
+end
+
+--------------------------------------------------
+-- TRUE DISTANCE-TO-GOAL FIELD (added 2026-10-16)
+--
+-- WHY: AIService.bestMoveToward used to rank reachable move tiles by STRAIGHT-LINE
+-- (chebyshev) distance to the nearest player. Straight-line distance ignores walls,
+-- deep water, impassable terrain and chasm gaps, so when a barrier separates the
+-- enemy from the player the "closest-looking" tile is a dead-end pocket jammed up
+-- against the barrier. The enemy walked into that pocket every turn and stalled.
+--
+-- WHAT: a flood-fill (breadth-first search) OUTWARD from the goal tile across the
+-- whole map, honoring the SAME passability rules the movement engine uses
+-- (IsBlocked walls/objects, IsImpassableTerrain, chasm-gap floors). It returns a
+-- field: field[tileKey(x,y)] = true number of steps to walk from (x,y) to the goal
+-- going AROUND barriers. Tiles with no walkable route to the goal are absent from
+-- the field (nil) and must be treated as unreachable (math.huge) by the caller.
+--
+-- This is map geometry only (no per-unit jump/flight/occupancy): it answers "how far
+-- is this tile from the player around the terrain", which is exactly what gap-closing
+-- ranking needs. The per-unit reachable set still comes from GetMoveCandidates; this
+-- field only RANKS those tiles by genuine progress toward the goal.
+--
+-- Cost: one flood-fill over the grid per call (<= mapWidth*mapHeight tiles). On a
+-- 20x30 (600-tile) map this is trivial and well within the per-unit AI budget; the
+-- game is turn-based, so there is no frame-rate pressure.
+--------------------------------------------------
+
+-- BUG-086 (2026-11-21): optional `mover`. When given, the flood also honors that unit's climb
+-- and drop limits (same Jump / downward-jump rule GetMoveCandidates uses; Flight ignores them).
+-- Without it, a cliff it cannot climb looked like a short route, so units in a low pocket
+-- saw no "closer" tile and shuffled in place. Callers that pass no mover keep the old field.
+-- The field floods FROM the goal, so each step goes neighbour -> current in walking terms:
+-- the mover walks from (nx,ny) onto (current), climbing elev(current) - elev(nx).
+-- BUG-147 (BUG-HUNT-12, accepted 2026-11-22): optional `seedNeighbours`. When true, the goal's 8 walkable
+-- neighbour tiles (on the map, not a wall / object, not impassable, not a chasm floor) are seeded at
+-- distance 1 WITHOUT the mover's climb check onto the goal tile. A target standing on a ledge the mover
+-- cannot climb onto no longer leaves the field stuck at its seed ("boxed dist=1009"): the mover only
+-- needs to reach a tile next to it. Callers that pass nothing keep the old field.
+function TargetingService.ComputeDistanceField(goalX: any, goalY: any, mapWidth: any, mapHeight: any, mover: any?, seedNeighbours: boolean?): any
+	local field = {}
+	local climbLimit, dropLimit = nil, nil
+	if mover and not StatusService.HasStatus(mover, "Flight") then
+		climbLimit = getJump(mover)
+		dropLimit = getDownwardJump(mover)
+	end
+
+	-- Goal tile itself must be inside the map; if the goal somehow sits on a blocked
+	-- tile we still seed from it (its neighbors are what matter for ranking).
+	if not isInsideMap(goalX, goalY, mapWidth, mapHeight) then
+		return field
+	end
+
+	local goalKey = tileKey(goalX, goalY)
+	field[goalKey] = 0
+
+	local queue = { { x = goalX, y = goalY } }
+	if seedNeighbours then
+		for _, dir in ipairs(DIRECTIONS) do
+			local sx, sy = goalX + dir.dx, goalY + dir.dy
+			if isInsideMap(sx, sy, mapWidth, mapHeight) and field[tileKey(sx, sy)] == nil
+				and not GameConstants.IsBlocked(sx, sy)
+				and not GameConstants.IsImpassableTerrain(sx, sy)
+				and not (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(sx, sy)) then
+				field[tileKey(sx, sy)] = 1
+				table.insert(queue, { x = sx, y = sy })
+			end
+		end
+	end
+	local head = 1
+	while head <= #queue do
+		local current = queue[head]
+		head = head + 1
+		local curDist = field[tileKey(current.x, current.y)]
+
+		for _, dir in ipairs(DIRECTIONS) do
+			local nx = current.x + dir.dx
+			local ny = current.y + dir.dy
+			if isInsideMap(nx, ny, mapWidth, mapHeight) then
+				local key = tileKey(nx, ny)
+				if field[key] == nil then
+					-- Passability mirrors the walker rules in GetMoveCandidates: solid
+					-- walls/objects and impassable terrain are never traversable. Chasm
+					-- gap floors are holes in the walkable surface (only a Rabbit Folk hop
+					-- clears them, which is a per-unit exception the ranking field does not
+					-- model), so they are treated as not-walkable here too.
+					local blocked = GameConstants.IsBlocked(nx, ny)
+						or GameConstants.IsImpassableTerrain(nx, ny)
+						or (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(nx, ny))
+					if not blocked and climbLimit then
+						local rise = GameConstants.GetElevation(current.x, current.y) - GameConstants.GetElevation(nx, ny)
+						if rise > 0 then
+							blocked = rise > climbLimit
+						elseif rise < 0 then
+							blocked = -rise > dropLimit
+						end
+					end
+					if not blocked then
+						field[key] = curDist + 1
+						table.insert(queue, { x = nx, y = ny })
+					end
+				end
+			end
+		end
+	end
+
+	return field
+end
+
+--------------------------------------------------
+-- LINE OF SIGHT (Bresenham's line through grid)
+--
+-- Returns true if there is clear LoS from (x1,y1) to (x2,y2).
+-- LoS is blocked if ANY tile along the line is a blocker.
+-- The start and end tiles themselves do NOT block.
+-- Range 1 (adjacent) always has LoS (melee can't be blocked).
+-- projectileType: nil/"Direct"/"Channeled" = units block LoS.
+--                 "Arc" = units do NOT block (arc clears over them),
+--                         but terrain BlocksLoS still applies.
+--------------------------------------------------
+
+function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerElevation, projectileType, attackerSide)
+	-- Adjacent tiles always have LoS
+	if chebyshevDistance(x1, y1, x2, y2) <= 1 then
+		return true
+	end
+
+	-- Giant race tag: ranged attacks targeting a Giant ignore LoS and blockers.
+	-- DB: "Ranged attacks targeting the Giant ignore LoS and blockers."
+	if allUnits then
+		for _, u in ipairs(allUnits) do
+			-- A Broken Giant loses this rule (user ruling 2026-10-27).
+			if u.tileX == x2 and u.tileY == y2 and u.isAlive and u.raceId
+				and not StatusService.IsRacePassiveSuppressed(u) then
+				local raceEntry = RaceData.GetRace(u.raceId)
+				if raceEntry and raceEntry.tags then
+					for _, tag in ipairs(raceEntry.tags) do
+						if tag == "Giant" then return true end
+					end
+				end
+			end
+		end
+	end
+
+	-- Build a lookup of tiles occupied by standing units (block LoS).
+	-- Arc projectiles use arc clearance instead of direct LoS:
+	--   Arc Peak Elevation = Attacker Elevation + Arc Height (default 3)
+	--   Clear if Arc Peak >= Blocker Elevation + 2
+	local isArc = (projectileType == "Arc")
+	-- Arc target-height gate (DB rule 46): an arc projectile cannot reach a target
+	-- whose EFFECTIVE elevation is ABOVE the arc's peak. Arc Peak = attacker effective
+	-- elevation + Arc Height (default 3; no per-projectile arcHeight exists in data).
+	-- Purely an ADDITIONAL target-height gate — it does not alter arc's "ignores unit
+	-- blockers / flies over terrain" behavior below. Applied once, for the destination.
+	-- (Adjacency and Giant-bypass early-returns above are intentionally left intact.)
+	if isArc then
+		local ARC_HEIGHT = 3
+		local atkElev = attackerElevation or GameConstants.GetElevation(x1, y1)
+		local arcPeak = atkElev + ARC_HEIGHT
+		local targetElev = GameConstants.GetElevation(x2, y2)
+		if allUnits then
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and u.tileX == x2 and u.tileY == y2 then
+					targetElev = getEffectiveElevation(u)  -- flight-aware effective elevation
+					break
+				end
+			end
+		end
+		if targetElev > arcPeak then
+			return false
+		end
+	end
+	-- Unit-blocking LoS policy (user override Sep 26 2026, supersedes locked DB rule):
+	--   Direct/Channeled: only OPPOSITE-SIDE (enemy) units block. Allied units never block.
+	--   Arc: NO unit blocks (ally or enemy) — arc flies over all units, keeping it
+	--        meaningfully distinct from Direct. (Designer must update Projectile LoS rules
+	--        38 'Unit blockers' and 45 'Arc blocker clearance' in the DB.)
+	local unitOccupied = {}
+	if allUnits then
+		for _, u in ipairs(allUnits) do
+			if u.isAlive then
+				local key = u.tileX .. "," .. u.tileY
+				unitOccupied[key] = { elev = GameConstants.GetElevation(u.tileX, u.tileY), side = u.side }
+			end
+		end
+	end
+
+	-- Bresenham's line algorithm
+	local dx = math.abs(x2 - x1)
+	local dy = math.abs(y2 - y1)
+	local sx = x1 < x2 and 1 or -1
+	local sy = y1 < y2 and 1 or -1
+	local err = dx - dy
+	local cx, cy = x1, y1
+
+	while true do
+		local e2 = 2 * err
+		if e2 > -dy then err = err - dy; cx = cx + sx end
+		if e2 < dx then err = err + dx; cy = cy + sy end
+
+		-- If we've reached the destination, LoS is clear
+		if cx == x2 and cy == y2 then return true end
+
+		-- Check if this intermediate tile is a blocker
+		-- Arc projectiles fly over terrain blockers; only Direct/Channeled are stopped
+		if not isArc and GameConstants.IsBlocked(cx, cy) then
+			-- Phase 2b (H): OBS blocker/billboard objects block DIRECT LoS, but an
+			-- attacker 3+ elevation levels ABOVE the object's tile can see over them
+			-- (map_gen_rules rows 87-89; mirrors the enemy-unit bypass below at
+			-- `atkElev < blocker.elev + 3`). Real walls / Stone Pillars carry no "OBS"
+			-- tag and always block. Arc is already exempt via the isArc guard.
+			-- NOTE: the locked rule is "3+ above the object TILE", so tile elevation is
+			-- used; GetBlockerData(cx,cy).height (standingHeight) is available if design
+			-- later wants to factor panel height.
+			if isObsObjectTile(cx, cy) then
+				local atkElev = attackerElevation or GameConstants.GetElevation(x1, y1)
+				if atkElev < GameConstants.GetElevation(cx, cy) + 3 then
+					return false
+				end
+				-- else: attacker high enough — LoS passes over this OBS object.
+			else
+				return false
+			end
+		end
+
+		-- Check if a standing unit occupies this intermediate tile
+		-- Arc projectiles are NEVER blocked by units (ally or enemy) — skip entirely.
+		if allUnits and not isArc then
+			local key = cx .. "," .. cy
+			local blocker = unitOccupied[key]
+			-- Direct/Channeled: only OPPOSITE-SIDE (enemy) units block LoS.
+			-- Allied blockers (same side as attacker) never block. If attackerSide is
+			-- unknown (nil), fall back to blocking (safe default preserves old behavior).
+			if blocker and (attackerSide == nil or blocker.side ~= attackerSide) then
+				local atkElev = attackerElevation or GameConstants.GetElevation(x1, y1)
+				-- Bypass if attacker Effective Elevation >= 3 above blocker.
+				if atkElev < blocker.elev + 3 then
+					return false
+				end
+			end
+		end
+	end
+end
+
+--------------------------------------------------
+-- ATTACK CANDIDATES (Chebyshev range, enemy only)
+--------------------------------------------------
+
+function TargetingService.GetAttackCandidates(actor, allUnits, range)
+	range = range or 1
+	-- Race (Catau on water) and trait (Restless / Sniper's Perch) range are added HERE, once, for every
+	-- caller -- turn prompt, AI, counter reach, validation (fix 2026-10-29: the prompt and AI left the
+	-- trait out, and validation added race twice).
+	range = range + RacePassiveService.GetRangeModifier(actor) + TraitEffectService.GetAttackRangeModifier(actor)
+	-- Support minimum range (ranged weapons cannot hit adjacent targets)
+	local minRange = actor.weaponMinRange or 1
+
+	local candidates = {}
+
+	for _, unit in ipairs(allUnits) do
+		if unit.isAlive and unit.side ~= actor.side
+			and not StatusService.HasStatus(unit, "Hide") then
+			local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
+			local inReach = dist <= range and dist >= minRange
+			local hasLos = inReach and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
+				allUnits, getEffectiveElevation(actor), actor.weaponProjectileType, actor.side)
+			local elevOk = hasLos and isMeleeElevationLegal(actor, unit, range)
+			if elevOk then
+				table.insert(candidates, unit)
+			elseif DEBUG_TARGETING and dist <= 2 then
+				-- BUG-HUNT-10 diagnostic (DEBUG_TARGETING only, no gameplay effect): why an adjacent / near
+				-- enemy is not a basic-attack target (reach incl. weapon min range, LoS, melee elevation).
+				debugLog(string.format("[TargetingService] AttackCand %s REJECTED %s: dist=%d range=%d minRange=%d los=%s elev=%s (atk %d, def %d) proj=%s",
+					tostring(actor.name), tostring(unit.name), dist, range, minRange, tostring(hasLos), tostring(elevOk),
+					getEffectiveElevation(actor), GameConstants.GetElevation(unit.tileX, unit.tileY),
+					tostring(actor.weaponProjectileType)))
+			end
+		end
+	end
+
+	-- TAUNT (user ruling 2026-10-27): a Taunted unit may basic-attack only its taunter.
+	local taunter = StatusService.GetTaunter(actor, allUnits)
+	if taunter then
+		local kept = {}
+		for _, c in ipairs(candidates) do
+			if c.id == taunter.id then table.insert(kept, c) end
+		end
+		if DEBUG_TARGETING and #kept < #candidates then
+			debugLog(string.format("[TargetingService] AttackCand %s is Taunted by %s: %d -> %d targets",
+				tostring(actor.name), tostring(taunter.name), #candidates, #kept))
+		end
+		candidates = kept
+	end
+
+	return candidates
+end
+
+-- OBS Phase 2c-B: breakable blocker-prop OBS objects are valid BASIC-ATTACK targets
+-- (map_gen_rules row 82: 3 hits from ANY source, incl. a unit's direct attack, break
+-- them). Mirrors GetAttackCandidates' legality gates EXACTLY (range, minRange, direct
+-- LoS, melee elevation) but iterates state.objects; the Ad Billboard (isImmovable / no
+-- numeric hitsToDestroy) is excluded as unbreakable (rows 85/93). Returns tiles with a
+-- distinct id "obj:x,y" and kind="object", mirroring GetPushableObjectTargets.
+function TargetingService.GetAttackableObjectTargets(actor, allUnits, range, state)
+	local out = {}
+	-- TAUNT (user ruling 2026-10-27): a Taunted unit cannot attack objects.
+	if StatusService.GetTaunter(actor, allUnits) then return out end
+	if not (state and state.objects) then return out end
+	-- Same range as the AttackObject command (race + Restless / Sniper's Perch), Tester D-1 2026-10-29.
+	range = (range or 1) + RacePassiveService.GetRangeModifier(actor) + TraitEffectService.GetAttackRangeModifier(actor)
+	local minRange = actor.weaponMinRange or 1
+	for _, inst in ipairs(state.objects) do
+		local def = inst and inst.type and ObjectData.Objects[inst.type]
+		-- Mimic disguise (2026-10-28): an UNMASKED disguise object (Mimic) is also attackable —
+		-- a hit wakes it (CommandService AttackObject). A DISGUISED one is never offered (that
+		-- would give it away); hidden objects are never offered either.
+		-- USER RULING 2026-10-30 (project_rules 241 B3): chests are breakable now, so a DISGUISED
+		-- Mimic is offered too (any hit wakes it, ObjectEffectService.ApplyObjectHit), listed under
+		-- its shown name ("Treasure Chest") with no wake flag, so the list looks like a real chest.
+		local wakes = inst ~= nil and not inst.hidden
+			and ObjectEffectService.DISGUISES[inst.type] ~= nil
+		local shownName = (inst and ObjectEffectService.GetDisplayType(inst, nil)) or (def and def.id) or (inst and inst.type)
+		-- Only an UNMASKED Mimic may be flagged as "wakes" (the flag reaches the client and the AI).
+		local wakeFlag = wakes and inst.unmasked == true
+		if def and def.passable == false and def.isImmovable ~= true
+			and (wakes or (type(def.hitsToDestroy) == "number" and def.hitsToDestroy > 0))
+			and inst.x and inst.y then
+			local pseudo = { tileX = inst.x, tileY = inst.y }
+			local dist = chebyshevDistance(actor.tileX, actor.tileY, inst.x, inst.y)
+			if dist <= range and dist >= minRange
+				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, inst.x, inst.y,
+					allUnits, getEffectiveElevation(actor), actor.weaponProjectileType, actor.side)
+				and isMeleeElevationLegal(actor, pseudo, range)
+			then
+				table.insert(out, {
+					id = string.format("obj:%d,%d", inst.x, inst.y),
+					name = shownName,
+					tileX = inst.x, tileY = inst.y, kind = "object",
+					wakesObject = wakeFlag or nil,
+				})
+			end
+		end
+	end
+	return out
+end
+
+--------------------------------------------------
+-- SKILL CANDIDATES (Slice 3)
+-- Returns valid target units based on the skill's targetRules.
+--   "Enemy Unit"       → enemies in range
+--   "Ally Unit, Self"  → allies + self in range
+--------------------------------------------------
+
+function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
+	-- 2026-10-07: range (max + weapon-only min + per-skill Bonus Skill Range share)
+	-- comes from the ONE shared formula GameConstants.CalcSkillRange (DAT-001), also
+	-- used by CommandService validation so prompt and validation never drift.
+	-- HALFLING — Nimble Steps (2026-10-02): movement skills +1 range (race modifier).
+	local range, minRange, baseRange, bonusRange = GameConstants.CalcSkillRange(
+		actor, skillDef, RacePassiveService.GetSkillRangeModifier(actor, skillDef)
+			+ WeaponPassiveService.GetSkillRangeBonus(actor, skillDef) -- ArcaneReach (Staff)
+		+ (require :: any)(script.Parent.DoctrinePassiveService).GetProjectileRangeModifier(actor, skillDef.projectileType or (skillDef.range == -1 and actor.weaponProjectileType or nil))) -- Ranger
+	debugLog(string.format("[SkillCand] %s using %s | skillRange=%s baseRange=%d bonusRange=%d range=%d | weaponMaxRange=%s INT=%s derivedBSR=%s",
+		actor.name, skillDef.name or skillDef.id, tostring(skillDef.range),
+		baseRange, bonusRange, range, tostring(actor.weaponMaxRange),
+		tostring(actor.effectiveStats and actor.effectiveStats.INT),
+		tostring(actor.derivedStats and actor.derivedStats.bonusSkillRange)))
+	local targetRules = skillDef.targetRules or "Enemy Unit"
+	local candidates = {}
+
+	-- ============================================================
+	-- SELF-TARGETING: Self, Self (Aura), Ally Tile (centered on caster)
+	-- No selection needed — caster is the only valid target
+	-- "Self, Allies" with range=0 is also caster-origin AOE (Consecrate, Bulwark Field)
+	-- "Caster Area" (2026-10-26): centered on the caster, affects every unit in the area.
+	-- ============================================================
+	if targetRules == "Self" or targetRules == "Self (Aura)"
+		or targetRules == "Ally Tile (centered on caster)"
+		or targetRules == "Caster Area"
+		or (targetRules == "Self, Allies" and (skillDef.range or 0) == 0) then
+		table.insert(candidates, actor) -- self is the "target"
+		print(string.format("[SkillCand] %s → self-target (%s)", actor.name, targetRules))
+		return candidates, range
+	end
+
+	-- ============================================================
+	-- "Self, Allies" with range > 0 is GROUND-TARGETED AOE
+	-- (e.g. Mending Rain: anchor range 3, Circle radius 2, allies only)
+	-- ============================================================
+	if targetRules == "Self, Allies" and (skillDef.range or 0) > 0 then
+		table.insert(candidates, {
+			id = "_ground_target",
+			name = "Ground",
+			tileX = actor.tileX,
+			tileY = actor.tileY,
+			isGroundTarget = true,
+		})
+		print(string.format("[SkillCand] %s → ground target (Self, Allies range=%d)", actor.name, range))
+		return candidates, range
+	end
+
+	-- ============================================================
+	-- TILE TARGETING: Ground / Enemy Tile / Empty Tile
+	-- Return a special ground-target marker + range so the caller
+	-- knows to accept tile clicks instead of unit clicks.
+	-- ============================================================
+	if targetRules == "Ground, including occupied Ground"
+		or targetRules == "Enemy Tile"
+		or targetRules == "Empty Tile" then
+		-- Ground-targeting skill is always available if caster has MP
+		-- Return a special marker entry so buildTurnPrompt sends groundTarget=true
+		table.insert(candidates, {
+			id = "_ground_target",
+			name = "Ground",
+			tileX = actor.tileX,
+			tileY = actor.tileY,
+			isGroundTarget = true,
+		})
+		print(string.format("[SkillCand] %s → ground target (%s) range=%d", actor.name, targetRules, range))
+		return candidates, range
+	end
+
+	-- ============================================================
+	-- KO-UNIT TARGETING: revive skills (targetRules "KO Unit") offer KO'd units
+	-- of ANY side within range (enemy revive allowed — feeds Torture, like the
+	-- revive potions). Dead units are normally skipped by the unit loop below, so
+	-- this dedicated branch handles them. No Hide filter — corpses are not hidden.
+	-- ============================================================
+	if targetRules == "KO Unit" then
+		for _, unit in ipairs(allUnits) do
+			if (not unit.isAlive) and not unit.isSummon then
+				local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
+				if dist <= range and dist >= minRange then
+					table.insert(candidates, unit)
+				end
+			end
+		end
+		print(string.format("[SkillCand] %s → KO-unit target (revive) range=%d found=%d",
+			actor.name, range, #candidates))
+		return candidates, range
+	end
+
+	-- ============================================================
+	-- UNIT TARGETING: iterate all units and filter by targetRules
+	-- ============================================================
+	local isAllyRule = targetRules == "Ally Unit, Self"
+		or targetRules == "Self, Ally Unit"
+	local isAllyOnlyRule = targetRules == "Ally Unit"
+	local isIndiscriminate = targetRules == "Ally Unit, Enemy Unit, Self"
+	-- All-tile widening (2026-10-24): ally-only / enemy-only skills (minus the seven
+	-- carve-outs) may target a unit of ANY side. LoS is unchanged per skill (we do
+	-- NOT touch skipLos), so a widened enemy skill still needs LoS to its target.
+	local widened = TargetingService.IsWidenedSkill(skillDef)
+
+	-- All-tile widening (Option A, 2026-10-24): a PLAYER-controlled widened skill
+	-- switches to tile-click mode — it offers the ground marker so the player can
+	-- aim at ANY tile (occupied or empty). Clicking an occupied tile resolves
+	-- against the occupant (BattleTurnController occupant lookup on commit); an
+	-- empty tile fires the terrain reaction (CommandService ground branch). This
+	-- traded away the per-enemy damage preview (restored 2026-10-30 by PreviewSkillHits) and matches
+	-- the engine's tile-click design (units are selected via their tile).
+	-- GATED to controller == "Player": AI-driven units (enemies AND player-side
+	-- summons) keep their existing side-based unit targeting — the enemy AI is
+	-- unchanged per the user's "players only" ruling.
+	if widened and actor.controller == "Player" then
+		table.insert(candidates, {
+			id = "_ground_target", name = "Ground",
+			tileX = actor.tileX, tileY = actor.tileY,
+			isGroundTarget = true,
+		})
+		print(string.format("[SkillCand] %s -> WIDENED tile-click mode (%s) range=%d",
+			actor.name, targetRules, range))
+		return candidates, range
+	end
+
+	-- AI-driven units with a UTILITY any-tile skill (no damage, heal, buff or debuff, e.g.
+	-- Flash Freeze, Rainfall Zone) aim at a tile, exactly as they did when these skills were
+	-- "Ground" skills. AIService scores ground markers as zone/terrain placements.
+	local widenedIntent = if widened then skillIntent(skillDef) else nil
+	if widened and widenedIntent == "utility" then
+		table.insert(candidates, {
+			id = "_ground_target", name = "Ground",
+			tileX = actor.tileX, tileY = actor.tileY,
+			isGroundTarget = true,
+		})
+		print(string.format("[SkillCand] %s -> AI utility tile-target (%s) range=%d",
+			actor.name, targetRules, range))
+		return candidates, range
+	end
+
+	for _, unit in ipairs(allUnits) do
+		if not unit.isAlive then
+			-- skip dead units
+		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) > range then
+			debugLog(string.format("[SkillCand] %s REJECTED %s: out of range (dist=%d > range=%d)",
+				actor.name, unit.name, chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY), range))
+		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) < minRange then
+			debugLog(string.format("[SkillCand] %s REJECTED %s: inside weapon min range (dist=%d < minRange=%d)",
+				actor.name, unit.name, chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY), minRange))
+		else
+			-- LoS check: ally/healing skills skip LoS
+			local projType = skillDef.projectileType
+			if not projType or projType == "Inherit" then
+				projType = actor.weaponProjectileType
+			end
+			-- Healing/support any-tile skills keep the LoS skip they had as ally-rule skills
+			-- (Dark Restoration, formerly indiscriminate, too); harmful ones still need LoS.
+			local skipLos = isAllyRule or isAllyOnlyRule or isIndiscriminate
+				or widenedIntent == "beneficial" or widenedIntent == "mixed"
+			local hasLos = skipLos
+				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
+					allUnits, getEffectiveElevation(actor), projType, actor.side)
+			if not hasLos then
+				debugLog(string.format("[SkillCand] %s REJECTED %s: no LoS (proj=%s)", actor.name, unit.name, tostring(projType)))
+			elseif not isMeleeElevationLegal(actor, unit, baseRange) then
+				debugLog(string.format("[SkillCand] %s REJECTED %s: elevation (baseRange=%d)", actor.name, unit.name, baseRange))
+			else
+				-- Allegiance filter
+				if widened then
+					-- Players already returned above (tile-click mode); this is an AI-driven
+					-- unit. Hide still protects. Side is steered by the skill's card intent so
+					-- the enemy AI keeps side-based choices (it never heals its foes or
+					-- blasts its own allies on purpose); friendly fire still applies to areas.
+					if StatusService.HasStatus(unit, "Hide") then
+						debugLog(string.format("[SkillCand] %s REJECTED %s: hidden (Hide status)", actor.name, unit.name))
+					elseif widenedIntent == "harmful" and unit.side == actor.side then
+						debugLog(string.format("[SkillCand] %s REJECTED %s: same side (harmful skill, AI)", actor.name, unit.name))
+					elseif widenedIntent == "beneficial" and unit.side ~= actor.side then
+						debugLog(string.format("[SkillCand] %s REJECTED %s: other side (beneficial skill, AI)", actor.name, unit.name))
+					else
+						table.insert(candidates, unit)
+					end
+				elseif targetRules == "Enemy Unit" then
+					if unit.side ~= actor.side and not StatusService.HasStatus(unit, "Hide") then
+						table.insert(candidates, unit)
+					elseif StatusService.HasStatus(unit, "Hide") then
+						debugLog(string.format("[SkillCand] %s REJECTED %s: hidden (Hide status)", actor.name, unit.name))
+					elseif unit.side == actor.side then
+						debugLog(string.format("[SkillCand] %s REJECTED %s: same side", actor.name, unit.name))
+					end
+				elseif isAllyRule then
+					-- Ally Unit, Self / Self, Allies / Self, Ally Unit
+					if unit.side == actor.side then
+						table.insert(candidates, unit)
+					end
+				elseif isAllyOnlyRule then
+					-- Ally Unit (NOT self)
+					if unit.side == actor.side and unit.id ~= actor.id then
+						table.insert(candidates, unit)
+					elseif unit.id == actor.id then
+						debugLog(string.format("[SkillCand] %s REJECTED %s: self excluded (Ally Unit only)", actor.name, unit.name))
+					end
+				elseif isIndiscriminate then
+					-- Any alive unit in range
+					table.insert(candidates, unit)
+				else
+					-- Unknown targetRules fallback: treat as enemy
+					if unit.side ~= actor.side then
+						table.insert(candidates, unit)
+					end
+				end
+			end
+		end
+	end
+
+	-- PHASE LOCK (user ruling 2026-10-27): Fated Escape cannot move a Phase Locked ally.
+	if skillDef.id == "SKL-FATED-ESCAPE" then
+		local kept = {}
+		for _, c in ipairs(candidates) do
+			if not StatusService.IsRelocationLocked(c) then table.insert(kept, c) end
+		end
+		candidates = kept
+	end
+
+	-- [LOG] One always-on summary line per skill (replaces the thousands of gated
+	-- per-candidate REJECTED lines above). Counts real unit targets found; the
+	-- ground/self-target early-returns above never reach here, so this is the
+	-- unit-targeting path only.
+	local considered = 0
+	for _, u in ipairs(allUnits) do
+		if u.isAlive then considered += 1 end
+	end
+	print(string.format("[SkillCand] %s %s: %d/%d targets in range",
+		actor.name, skillDef.name or skillDef.id, #candidates, considered))
+
+	return candidates, range
+end
+
+--------------------------------------------------
+-- CLEAVE TARGETS (Slice 3)
+--
+-- Cleave hits all enemies within range 1 of the caster that are
+-- also within 1 tile of the primary target (forming a 3-tile arc).
+-- The primary target is always included.
+-- Returns a list of units (primary target first).
+--------------------------------------------------
+
+function TargetingService.GetCleaveTargets(actor, primaryTarget, allUnits, anySide)
+	-- Cleave = primary target + up to 2 flanking units perpendicular to attack direction.
+	-- Max 3 hits. Secondary tiles are adjacent to BOTH attacker AND target, on the sides.
+	-- Elevation filter: secondary must be ±2 elevation from attacker.
+	-- anySide (optional, 2026-10-26): when true the flank tiles hit whoever stands there
+	-- (Wide Arc augment ruling: any side). Default (nil) keeps the existing enemy-only
+	-- behaviour for every current caller.
+	local targets = {}
+	table.insert(targets, primaryTarget)
+
+	-- Direction vector from attacker to target
+	local dx = primaryTarget.tileX - actor.tileX
+	local dy = primaryTarget.tileY - actor.tileY
+
+	-- Perpendicular directions (the two flanking tiles)
+	-- For cardinal: (1,0)→perps are (0,1),(0,-1). For diagonal: (1,1)→perps are (1,-1),(-1,1)
+	local perp1X, perp1Y, perp2X, perp2Y
+	if dx == 0 then     -- N or S attack
+		perp1X, perp1Y = -1, dy
+		perp2X, perp2Y = 1, dy
+	elseif dy == 0 then -- E or W attack
+		perp1X, perp1Y = dx, -1
+		perp2X, perp2Y = dx, 1
+	else                -- diagonal attack
+		perp1X, perp1Y = dx, 0
+		perp2X, perp2Y = 0, dy
+	end
+
+	local atkElev = getEffectiveElevation(actor)
+	local flankTiles = {
+		{ x = actor.tileX + perp1X, y = actor.tileY + perp1Y },
+		{ x = actor.tileX + perp2X, y = actor.tileY + perp2Y },
+	}
+
+	for _, tile in ipairs(flankTiles) do
+		local tileElev = GameConstants.GetElevation(tile.x, tile.y)
+		if math.abs(tileElev - atkElev) <= 2 then
+			for _, unit in ipairs(allUnits) do
+				if unit.isAlive and (anySide or unit.side ~= actor.side) and unit.id ~= actor.id
+					and unit.id ~= primaryTarget.id
+					and unit.tileX == tile.x and unit.tileY == tile.y then
+					table.insert(targets, unit)
+				end
+			end
+		end
+	end
+
+	return targets
+end
+
+--------------------------------------------------
+-- GET VALID SKILL TILES (Slice 3 — for client highlighting)
+--
+-- Returns all tile positions within skill range (for highlighting).
+--------------------------------------------------
+
+function TargetingService.GetSkillRangeTiles(actor, skillDef, mapWidth, mapHeight)
+	-- Shared formula (DAT-001) so highlighting matches validation.
+	local range = GameConstants.CalcSkillRange(
+		actor, skillDef, RacePassiveService.GetSkillRangeModifier(actor, skillDef)
+			+ WeaponPassiveService.GetSkillRangeBonus(actor, skillDef) -- ArcaneReach (Staff)
+		+ (require :: any)(script.Parent.DoctrinePassiveService).GetProjectileRangeModifier(actor, skillDef.projectileType or (skillDef.range == -1 and actor.weaponProjectileType or nil))) -- Ranger
+	local tiles = {}
+
+	for dy = -range, range do
+		for dx = -range, range do
+			if math.max(math.abs(dx), math.abs(dy)) <= range then
+				local tx = actor.tileX + dx
+				local ty = actor.tileY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+
+	return tiles
+end
+
+--------------------------------------------------
+-- VALIDATE SELECTION (updated for Slice 3)
+--------------------------------------------------
+
+function TargetingService.ValidateSelection(
+	actor,
+	actionType,
+	selection,
+	allUnits,
+	mapWidth,
+	mapHeight
+)
+	if actionType == "Wait" then
+		return true, nil
+	end
+
+	if actionType == "Move" then
+		if type(selection) ~= "table"
+			or type(selection.tileX) ~= "number"
+			or type(selection.tileY) ~= "number"
+		then
+			return false, "Move selection must be a table with tileX and tileY."
+		end
+
+		local candidates = TargetingService.GetMoveCandidates(
+			actor, allUnits, mapWidth, mapHeight
+		)
+
+		for _, c in ipairs(candidates) do
+			if c.tileX == selection.tileX and c.tileY == selection.tileY then
+				return true, nil
+			end
+		end
+
+		return false, string.format(
+			"Tile (%d,%d) is not reachable from (%d,%d) with range %d.",
+			selection.tileX, selection.tileY,
+			actor.tileX, actor.tileY,
+			getMovementRange(actor)
+		)
+	end
+
+	if actionType == "Attack" then
+		if type(selection) ~= "table" or not selection.isAlive then
+			return false, "Attack selection must be a living unit."
+		end
+		if selection.side == actor.side then
+			return false, "Cannot attack an ally."
+		end
+
+		-- Use actor's equipped weapon range for validation
+		-- Race and trait range are added inside GetAttackCandidates (2026-10-29).
+		local attackRange = (actor.weaponMaxRange or 1)
+		+ (require :: any)(script.Parent.DoctrinePassiveService).GetProjectileRangeModifier(actor, actor.weaponProjectileType) -- Ranger (2026-10-28)
+		local candidates = TargetingService.GetAttackCandidates(actor, allUnits, attackRange)
+		for _, c in ipairs(candidates) do
+			if c == selection then
+				return true, nil
+			end
+		end
+
+		return false, string.format(
+			"Target %s is out of basic attack range.", selection.name
+		)
+	end
+
+	if actionType == "Skill" then
+		if type(selection) ~= "table" then
+			return false, "Skill selection must be a table with a target field."
+		end
+
+		local target     = selection.target
+		local skillRange = selection.skillRange or 1
+		-- BUGFIX 2026-10-06: weapon-range skills carry the weapon's min range (0 = none).
+		local skillMinRange = selection.skillMinRange or 0
+		local targetRules = selection.targetRules or "Enemy Unit"
+
+		-- Ground targeting: validate tile coords + range only
+		if target and target.isGroundTarget then
+			-- BUG-118 (BUG-HUNT-14): a unit-target skill that is not a widened any-tile skill
+			-- (e.g. the carve-outs Skyfall Lance / Reckless Charge) never takes a bare tile. It
+			-- used to pass here on range alone, spend AP/MP on "Ground(x,y): -0 HP", and a charge
+			-- could resolve onto its own caster.
+			if not selection.widened and TargetingService.IsUnitOnlyTargetRule(targetRules) then
+				return false, "This skill must target a unit."
+			end
+			local dist = chebyshevDistance(actor.tileX, actor.tileY, target.tileX, target.tileY)
+			if dist > skillRange then
+				return false, string.format(
+					"Ground target (%d,%d) out of range (%d). Distance: %d.",
+					target.tileX, target.tileY, skillRange, dist
+				)
+			end
+			if dist < skillMinRange then
+				return false, string.format(
+					"Ground target (%d,%d) is inside weapon min range (%d). Distance: %d.",
+					target.tileX, target.tileY, skillMinRange, dist
+				)
+			end
+			-- "Empty Tile" skills (Blink, Ice Spike, traps, summons) need an unoccupied tile; an
+			-- occupied pick used to spend MP/RT with no effect (Studio sweep 2026-11-06).
+			if targetRules == "Empty Tile" then
+				for _, u in ipairs(allUnits or {}) do
+					if u.isAlive and not u.isGroundTarget and u.tileX == target.tileX and u.tileY == target.tileY then
+						return false, string.format("Tile (%d,%d) is occupied.", target.tileX, target.tileY)
+					end
+				end
+				-- Solid objects (Ice Spike, blockers, barricades) also make a tile non-empty: a movement
+				-- skill used to land inside an Ice Spike (sweep 2026-11-06).
+				if GameConstants.GetBlockerData(target.tileX, target.tileY) then
+					return false, string.format("Tile (%d,%d) is blocked by an object.", target.tileX, target.tileY)
+				end
+			end
+			return true, nil
+		end
+
+		-- Self-targeting: always valid (target is the caster)
+		if targetRules == "Self" or targetRules == "Self (Aura)"
+			or targetRules == "Ally Tile (centered on caster)"
+			or targetRules == "Self, Allies"
+			or targetRules == "Caster Area" then
+			return true, nil
+		end
+
+		-- Revive skills (targetRules "KO Unit"): the target is SUPPOSED to be KO'd,
+		-- so bypass the living-target guard below and require a dead unit instead.
+		-- Any side is valid (enemy revive allowed). Range-checked; no Hide (corpses).
+		if targetRules == "KO Unit" then
+			if not target then
+				return false, "This skill requires a KO'd target."
+			end
+			if target.isAlive then
+				return false, "This skill can only target a KO'd unit."
+			end
+			local koDist = chebyshevDistance(actor.tileX, actor.tileY, target.tileX, target.tileY)
+			if koDist > skillRange then
+				return false, string.format("KO'd target out of skill range (%d). Distance: %d.", skillRange, koDist)
+			end
+			return true, nil
+		end
+
+		if not target or not target.isAlive then
+			return false, "Target is not alive."
+		end
+
+		-- Validate target allegiance based on skill target rules
+		if selection.widened then
+			-- All-tile widening (2026-10-24): a unit of ANY side is valid. Hide still
+			-- protects — hidden units were never offered as candidates, so reject one
+			-- here too (defends against a hand-sent target id). No side restriction.
+			if StatusService.HasStatus(target, "Hide") then
+				return false, "Target is hidden."
+			end
+		elseif targetRules == "Enemy Unit" then
+			if target.side == actor.side then
+				return false, "Cannot target an ally with this offensive skill."
+			end
+		elseif targetRules == "Ally Unit, Self" then
+			if target.side ~= actor.side then
+				return false, "Cannot target an enemy with this support skill."
+			end
+		elseif targetRules == "Ally Unit" then
+			if target.side ~= actor.side or target.id == actor.id then
+				return false, "Must target an ally (not self)."
+			end
+		elseif targetRules == "Ally Unit, Enemy Unit, Self" then
+			-- Any unit is valid
+		end
+
+		-- Range check (Chebyshev)
+		local dist = chebyshevDistance(actor.tileX, actor.tileY, target.tileX, target.tileY)
+		if dist > skillRange then
+			return false, string.format(
+				"Target %s is out of skill range (%d). Distance: %d.",
+				target.name, skillRange, dist
+			)
+		end
+		if dist < skillMinRange then
+			return false, string.format(
+				"Target %s is inside weapon min range (%d). Distance: %d.",
+				target.name, skillMinRange, dist
+			)
+		end
+
+		return true, nil
+	end
+
+	return false, "Unknown actionType: " .. tostring(actionType)
+end
+
+--------------------------------------------------
+-- AOE PATTERN TILE GENERATORS  (Slice 3)
+--
+-- Each function returns an array of {tileX, tileY} positions
+-- that the pattern covers.  CommandService collects units on
+-- those tiles, filters by targetRules, and resolves each hit.
+--
+-- DB rules:
+--   - AOE elevation limit: ±2 from center/anchor (default)
+--   - Center Spread AOE does not pass through BlocksAOE
+--   - Selected Area AOE affects valid tiles directly
+--   - Caster-origin patterns use caster's current tile
+--
+-- Elevation + BlocksAOE filtering is done by the caller,
+-- not inside these generators (keeps them pure geometry).
+--------------------------------------------------
+
+-- Circle: all tiles within Chebyshev distance <= radius of center
+function TargetingService.GetCircleTiles(centerX, centerY, radius, mapWidth, mapHeight)
+	local tiles = {}
+	for dy = -radius, radius do
+		for dx = -radius, radius do
+			if math.max(math.abs(dx), math.abs(dy)) <= radius then
+				local tx, ty = centerX + dx, centerY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+	return tiles
+end
+
+-- Ring: only the outer edge of a circle (distance == radius)
+function TargetingService.GetRingTiles(centerX, centerY, radius, mapWidth, mapHeight)
+	local tiles = {}
+	for dy = -radius, radius do
+		for dx = -radius, radius do
+			if math.max(math.abs(dx), math.abs(dy)) == radius then
+				local tx, ty = centerX + dx, centerY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+	return tiles
+end
+
+-- Diamond ring (Static Field, USER RULING 2026-11-08): tiles at EXACTLY N steps away counting
+-- straight (non-diagonal) steps, i.e. |dx| + |dy| == N. N = 2 gives 8 tiles: 2 straight out in each
+-- direction plus the 4 one-step diagonals. Centre never included. (Ring = Chebyshev edge, unchanged.)
+function TargetingService.GetDiamondRingTiles(centerX, centerY, radius, mapWidth, mapHeight)
+	local tiles = {}
+	for dy = -radius, radius do
+		for dx = -radius, radius do
+			if math.abs(dx) + math.abs(dy) == radius then
+				local tx, ty = centerX + dx, centerY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+	return tiles
+end
+
+-- Cross: cardinal lines of length N from center (+ center itself)
+function TargetingService.GetCrossTiles(centerX, centerY, radius, mapWidth, mapHeight)
+	local tiles = { { tileX = centerX, tileY = centerY } }
+	local dirs = { {0,-1}, {0,1}, {-1,0}, {1,0} }
+	for _, d in ipairs(dirs) do
+		for i = 1, radius do
+			local tx, ty = centerX + d[1]*i, centerY + d[2]*i
+			if isInsideMap(tx, ty, mapWidth, mapHeight) then
+				table.insert(tiles, { tileX = tx, tileY = ty })
+			end
+		end
+	end
+	return tiles
+end
+
+-- Line: N tiles in a direction from origin (exclusive of origin)
+-- direction = {dx, dy} normalized to -1/0/1
+function TargetingService.GetLineTiles(originX, originY, dx, dy, length, mapWidth, mapHeight)
+	local tiles = {}
+	for i = 1, length do
+		local tx, ty = originX + dx*i, originY + dy*i
+		if isInsideMap(tx, ty, mapWidth, mapHeight) then
+			table.insert(tiles, { tileX = tx, tileY = ty })
+		end
+	end
+	return tiles
+end
+
+-- Cone: expanding triangle in a direction, depth N
+-- At distance d from origin, width = 2d-1 tiles perpendicular to direction
+-- direction = {dx, dy} (cardinal or diagonal)
+function TargetingService.GetConeTiles(originX, originY, dx, dy, depth, mapWidth, mapHeight)
+	local tiles = {}
+	-- Determine perpendicular direction
+	local perpDx, perpDy
+	if dx == 0 then
+		perpDx, perpDy = 1, 0
+	elseif dy == 0 then
+		perpDx, perpDy = 0, 1
+	else
+		-- Diagonal: perpendicular is the two cardinals
+		perpDx, perpDy = -dy, dx
+	end
+
+	for d = 1, depth do
+		-- Center tile at distance d
+		local cx, cy = originX + dx*d, originY + dy*d
+		-- Width expands: at d=1 width=1, d=2 width=3, d=3 width=5
+		local spread = d - 1
+		for s = -spread, spread do
+			local tx = cx + perpDx * s
+			local ty = cy + perpDy * s
+			if isInsideMap(tx, ty, mapWidth, mapHeight) then
+				table.insert(tiles, { tileX = tx, tileY = ty })
+			end
+		end
+	end
+	return tiles
+end
+
+-- Adjacent Area: all 8 tiles around a center (not including center)
+function TargetingService.GetAdjacentTiles(centerX, centerY, mapWidth, mapHeight)
+	local tiles = {}
+	for dy = -1, 1 do
+		for dx = -1, 1 do
+			if not (dx == 0 and dy == 0) then
+				local tx, ty = centerX + dx, centerY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+	return tiles
+end
+
+--------------------------------------------------
+-- GetAOETargets: unified AOE resolution
+--
+-- Given an aoePattern string, origin, target/direction,
+-- returns all affected {tileX, tileY} positions.
+-- CommandService calls this then filters for units.
+--------------------------------------------------
+
+function TargetingService.GetAOETargetTiles(aoePattern, actor, targetTileX, targetTileY, mapWidth, mapHeight)
+	-- Parse pattern type and parameter
+	-- Supports: "Circle2", "Ring1", "Spread", "Spread3x3", "Impact1", etc.
+	local patternType, param = aoePattern:match("^(%a+)(%d+)$")
+	if not patternType then
+		-- Handle formats like "Spread3x3" (NxN suffix) or bare names like "Spread"
+		patternType, param = aoePattern:match("^(%a+)(%d+)x%d+$")
+	end
+	if not patternType then
+		patternType = aoePattern:match("^(%a+)$")
+	end
+	param = tonumber(param) or 1
+
+	if patternType == "Circle" then
+		return TargetingService.GetCircleTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "Ring" then
+		return TargetingService.GetRingTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "DiamondRing" then
+		return TargetingService.GetDiamondRingTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "Cross" then
+		return TargetingService.GetCrossTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "Line" then
+		-- Direction from actor toward target
+		local ddx = targetTileX - actor.tileX
+		local ddy = targetTileY - actor.tileY
+		local dx = ddx ~= 0 and (ddx > 0 and 1 or -1) or 0
+		local dy = ddy ~= 0 and (ddy > 0 and 1 or -1) or 0
+		return TargetingService.GetLineTiles(actor.tileX, actor.tileY, dx, dy, param, mapWidth, mapHeight)
+
+	elseif patternType == "TileLine" then
+		-- Tile-origin line (USER RULING 2026-11-09 12:04 AM, rule 255; Fissure Line, DB "range selects the Line
+		-- origin tile"): the line STARTS on the picked tile (tile 1 of N) and runs on away from the caster.
+		-- Direction = caster -> picked tile, same 8-way rule as Line. _tileLineFromX/Y is set only while a
+		-- channel resolves for a caster moved during its wait, so the line keeps its committed direction.
+		local fromX = actor._tileLineFromX or actor.tileX
+		local fromY = actor._tileLineFromY or actor.tileY
+		local ddx = targetTileX - fromX
+		local ddy = targetTileY - fromY
+		local dx = ddx ~= 0 and (ddx > 0 and 1 or -1) or 0
+		local dy = ddy ~= 0 and (ddy > 0 and 1 or -1) or 0
+		local tiles = {}
+		if isInsideMap(targetTileX, targetTileY, mapWidth, mapHeight) then
+			table.insert(tiles, { tileX = targetTileX, tileY = targetTileY })
+		end
+		if dx ~= 0 or dy ~= 0 then
+			for _, t in ipairs(TargetingService.GetLineTiles(targetTileX, targetTileY, dx, dy, param - 1, mapWidth, mapHeight)) do
+				table.insert(tiles, t)
+			end
+		end
+		return tiles
+
+	elseif patternType == "Cone" then
+		local ddx = targetTileX - actor.tileX
+		local ddy = targetTileY - actor.tileY
+		local dx = ddx ~= 0 and (ddx > 0 and 1 or -1) or 0
+		local dy = ddy ~= 0 and (ddy > 0 and 1 or -1) or 0
+		return TargetingService.GetConeTiles(actor.tileX, actor.tileY, dx, dy, param, mapWidth, mapHeight)
+
+	elseif patternType == "Adjacent" then
+		return TargetingService.GetAdjacentTiles(targetTileX, targetTileY, mapWidth, mapHeight)
+
+	elseif patternType == "Spread" then
+		-- 3x3 Center Spread = Circle radius 1
+		return TargetingService.GetCircleTiles(targetTileX, targetTileY, 1, mapWidth, mapHeight)
+
+	elseif patternType == "Impact" then
+		-- Impact N = Cross radius N (Impact 1 = 3x3 cross; Impact 2 = arms of 2, Meteor Marker).
+		return TargetingService.GetCrossTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "Aura" then
+		-- Aura is CASTER-ORIGIN: centered on the caster's own tile, radius = param
+		-- (Chebyshev), not the selected target tile. Mirrors Circle but from the
+		-- actor. Recipient side-filtering (allies vs enemies) is applied by the
+		-- resolution loop in CommandService, not here.
+		return TargetingService.GetCircleTiles(actor.tileX, actor.tileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "Cleave" then
+		-- Cleave is handled separately via GetCleaveTargets (unit-based, not tile-based)
+		return {}
+
+	else
+		print(string.format("[TargetingService] Unknown AOE pattern: %s", aoePattern))
+		return {}
+	end
+end
+
+--------------------------------------------------
+-- AOE SPREAD BLOCKING
+-- Center Spread AOE does not pass through BlocksAOE objects.
+-- Uses Bresenham walk from center to tile; if any intermediate
+-- tile has a BlocksAOE blocker, the target tile is blocked.
+-- DB: "Walls, closed doors, sealed barriers, and solid map
+-- objects tagged BlocksAOE block spread."
+--------------------------------------------------
+
+function TargetingService.IsAOEBlocked(centerX, centerY, targetX, targetY)
+	-- Walk from center toward target, checking intermediate tiles
+	local dx = targetX - centerX
+	local dy = targetY - centerY
+	local steps = math.max(math.abs(dx), math.abs(dy))
+	if steps <= 1 then return false end  -- adjacent tiles never blocked
+
+	for i = 1, steps - 1 do
+		local t = i / steps
+		local ix = centerX + math.floor(dx * t + 0.5)
+		local iy = centerY + math.floor(dy * t + 0.5)
+		if GameConstants.HasBlockerTag(ix, iy, "BlocksAOE") then
+			return true
+		end
+	end
+
+	-- Also blocked if the target tile itself is a BlocksAOE object
+	if GameConstants.HasBlockerTag(targetX, targetY, "BlocksAOE") then
+		return true
+	end
+	return false
+end
+
+--------------------------------------------------
+-- Chain targeting: jumps from target to nearest
+-- valid enemy within jumpRange, up to maxTargets.
+-- Returns array of units in chain order.
+--
+-- DB: Chain skills select first target at commitment.
+-- Jump distance default = 2 tiles (Chebyshev).
+--------------------------------------------------
+
+function TargetingService.GetChainTargets(firstTarget, allUnits, attackerSide, maxTargets, jumpRange)
+	jumpRange = jumpRange or 2
+	local chain = { firstTarget }
+	local seen = { [firstTarget.id] = true }
+	local current = firstTarget
+
+	for _ = 2, maxTargets do
+		local bestUnit = nil
+		local bestDist = math.huge
+
+		for _, u in ipairs(allUnits) do
+			if u.isAlive and u.side ~= attackerSide and not seen[u.id] then
+				local dist = chebyshevDistance(current.tileX, current.tileY, u.tileX, u.tileY)
+				if dist <= jumpRange and dist < bestDist then
+					bestDist = dist
+					bestUnit = u
+				end
+			end
+		end
+
+		if not bestUnit then break end
+		table.insert(chain, bestUnit)
+		seen[bestUnit.id] = true
+		current = bestUnit
+	end
+
+	return chain
+end
+
+--------------------------------------------------
+-- GET IMPACT SPLASH TARGETS (Slice 4 — Weapon Pattern AOE)
+--
+-- DB rule: "Primary Target receives 100% damage; four cardinally
+-- adjacent splash tiles receive 50% damage. Friendly fire applies."
+--
+-- Returns: { {unit=unit, dmgMult=1.0}, {unit=unit, dmgMult=0.5}, ... }
+-- Primary target always first. Splash includes ALL alive units on
+-- cardinal tiles (enemies AND allies — friendly fire per DB).
+-- Elevation filter: splash tile must be ±2 from impact tile.
+--------------------------------------------------
+
+function TargetingService.GetImpactSplashTargets(actor, primaryTarget, allUnits)
+	local results = {}
+	table.insert(results, { unit = primaryTarget, dmgMult = 1.0 })
+
+	local cx, cy = primaryTarget.tileX, primaryTarget.tileY
+	local impactElev = getEffectiveElevation(primaryTarget)
+
+	-- Four cardinal neighbors
+	local cardinals = {
+		{ x = cx, y = cy - 1 },
+		{ x = cx, y = cy + 1 },
+		{ x = cx - 1, y = cy },
+		{ x = cx + 1, y = cy },
+	}
+
+	for _, tile in ipairs(cardinals) do
+		local tileElev = GameConstants.GetElevation(tile.x, tile.y)
+		if math.abs(tileElev - impactElev) <= 2 then
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and u.id ~= primaryTarget.id and u.id ~= actor.id
+					and u.tileX == tile.x and u.tileY == tile.y then
+					table.insert(results, { unit = u, dmgMult = 0.5 })
+				end
+			end
+		end
+	end
+
+	return results
+end
+
+--------------------------------------------------
+-- GET LINE2 TARGETS (Slice 4 — Weapon Pattern AOE)
+--
+-- DB rule: Line 2 hits primary target + the tile directly
+-- behind the target in the attack direction. Both at 100%.
+-- Elevation filter: ±2 from primary target.
+--
+-- Returns: { {unit=unit, dmgMult=1.0}, ... }
+--------------------------------------------------
+
+function TargetingService.GetLine2Targets(actor, primaryTarget, allUnits)
+	local results = {}
+	table.insert(results, { unit = primaryTarget, dmgMult = 1.0 })
+
+	-- Direction from attacker to target (normalized to -1/0/+1)
+	local rawDx = primaryTarget.tileX - actor.tileX
+	local rawDy = primaryTarget.tileY - actor.tileY
+	local dx = rawDx == 0 and 0 or (rawDx > 0 and 1 or -1)
+	local dy = rawDy == 0 and 0 or (rawDy > 0 and 1 or -1)
+
+	-- Tile behind target = target + direction
+	local behindX = primaryTarget.tileX + dx
+	local behindY = primaryTarget.tileY + dy
+
+	local primaryElev = getEffectiveElevation(primaryTarget)
+	local behindElev = GameConstants.GetElevation(behindX, behindY)
+
+	if math.abs(behindElev - primaryElev) <= 2 then
+		for _, u in ipairs(allUnits) do
+			if u.isAlive and u.id ~= primaryTarget.id and u.id ~= actor.id
+				and u.tileX == behindX and u.tileY == behindY then
+				table.insert(results, { unit = u, dmgMult = 1.0 })
+			end
+		end
+	end
+
+	return results
+end
+
+-- LINE 3 (Spear, weapons_equipment 165; DESIGNER RULING 2026-11-21): the target plus the next 2 tiles
+-- directly behind it on the attack line. Same resolution as Line 2: every unit hit at 100%, each
+-- behind tile within +/-2 elevation of the primary target. Returns { {unit=, dmgMult=1.0}, ... }.
+function TargetingService.GetLine3Targets(actor, primaryTarget, allUnits)
+	local results = { { unit = primaryTarget, dmgMult = 1.0 } }
+	local rawDx = primaryTarget.tileX - actor.tileX
+	local rawDy = primaryTarget.tileY - actor.tileY
+	local dx = rawDx == 0 and 0 or (rawDx > 0 and 1 or -1)
+	local dy = rawDy == 0 and 0 or (rawDy > 0 and 1 or -1)
+	if dx == 0 and dy == 0 then return results end
+	local primaryElev = getEffectiveElevation(primaryTarget)
+	for step = 1, 2 do
+		local bx = primaryTarget.tileX + dx * step
+		local by = primaryTarget.tileY + dy * step
+		if math.abs(GameConstants.GetElevation(bx, by) - primaryElev) <= 2 then
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and u.id ~= primaryTarget.id and u.id ~= actor.id
+					and u.tileX == bx and u.tileY == by then
+					table.insert(results, { unit = u, dmgMult = 1.0 })
+				end
+			end
+		end
+	end
+	return results
+end
+
+-- Weapon line pattern lookup (Line2 / Line3) for the callers that switch on the weapon pattern.
+-- Returns the hit list, or nil when the pattern is not a line.
+function TargetingService.GetWeaponLineTargets(pattern, actor, primaryTarget, allUnits)
+	if pattern == "Line2" then return TargetingService.GetLine2Targets(actor, primaryTarget, allUnits) end
+	if pattern == "Line3" then return TargetingService.GetLine3Targets(actor, primaryTarget, allUnits) end
+	return nil
+end
+
+--------------------------------------------------
+-- GET INTERACT CANDIDATES (Slice 4 — Interact Command framework)
+--
+-- Interact is the universal Head-slot action (1 AP). It has four NATIVE
+-- target kinds (built-in; headgear only ENHANCES them, never enables):
+--   "recruitEnemy"  — enemy at <= recruitThreshold of max HP (native 5%)
+--   "allyRtHelp"    — living ally (not self): cuts the ally's current RT
+--   "reviveAlly"    — KO'd ally: channeled resuscitate (native 200 CT)
+--   "mapObject"     — a map object instance (PARKED — Slice 5 populates
+--                     state.objects; no object candidates appear until then)
+--
+-- Each candidate is tagged with { interactKind, id/objectId, name, tileX,
+-- tileY } so the client can label what the Interact will do and the server
+-- can re-validate on commit. Reach uses the actor's native Interact range
+-- (default 1, Chebyshev), extendable later by the HD-002 range hook.
+--
+-- Headgear ENHANCER hook points are nil-safe and default to the native
+-- baseline — see InteractService / CommandService for the magnitude hooks.
+-- Here we only need the recruit HP threshold and the interact reach, both
+-- read through ArmorPassiveService with a native-baseline fallback.
+--
+-- Returns: array of candidate tables (possibly empty — button grays out).
+--------------------------------------------------
+
+-- HD-014 Hazard Warden Hood (2026-10-29): what makes (x, y) a hazard tile, by the DB "Hazard" tag:
+-- a Hazard-tagged tile effect (Burning) and / or Hazard-tagged terrain (Molten, Quicksand, ...).
+-- Returns effectId?, terrainId? (both nil = not a hazard).
+local function hasTagIn(tags, tag)
+	for _, t in ipairs(tags or {}) do
+		if t == tag then return true end
+	end
+	return false
+end
+function TargetingService.GetTileHazards(x, y)
+	local effId, terId = nil, nil
+	if _tileEffectService and _tileEffectService.GetTileEffect then
+		local eff = _tileEffectService.GetTileEffect(x, y)
+		local edef = eff and GameConstants.TILE_EFFECTS[eff.id]
+		if edef and hasTagIn(edef.tags, "Hazard") then effId = eff.id end
+	end
+	local tid = GameConstants.GetTerrainId(x, y)
+	local tdef = tid and GameConstants.TERRAIN_TYPES[tid]
+	if tdef and hasTagIn(tdef.tags, "Hazard") then terId = tid end
+	return effId, terId
+end
+
+-- HD-015 Mechanist Headgear (2026-10-29): can this allied placed object be refreshed? It must hold
+-- charges below its full amount (Portable Ballista shots, Supply Station supplies) or have a timer.
+function TargetingService.CanMechanistRefreshObject(obj)
+	local arch = obj and obj.type and ObjectData.Objects and ObjectData.Objects[obj.type]
+	if not arch then return false end
+	if arch.shots and (obj.shotsLeft or 0) < arch.shots then return true end
+	if arch.supplies and (obj.supplies or 0) < arch.supplies then return true end
+	return obj.lifeCt ~= nil
+end
+
+function TargetingService.GetInteractCandidates(actor, allUnits, state)
+	local candidates = {}
+	if not actor or not actor.isAlive then
+		return candidates
+	end
+
+	-- Interact reach: native 1 tile. HD-002 Surveyor Visor adds +2 (hook,
+	-- nil-safe → 0 until headgear passives are wired).
+	local reach = 1
+	if (ArmorPassiveService :: any).GetInteractRangeBonus then
+		reach = reach + ((ArmorPassiveService :: any).GetInteractRangeBonus(actor) or 0)
+	end
+	-- Perks & Flaws (Phase 2b): Long/Short Reach adjust interact range.
+	reach = reach + TraitEffectService.GetInteractRangeModifier(actor)
+	-- UTI-016 Interaction Amplifier (2026-10-26): +range on the next Interact this turn.
+	if actor._interactAmp then
+		reach = reach + (actor._interactAmp.range or 0)
+	end
+	if reach < 1 then reach = 1 end
+
+	-- Recruit HP threshold: native 0.05 of max HP. HD-005 Recruiter's Circlet
+	-- raises it to 0.08 (hook, nil-safe → native until wired).
+	local recruitThreshold = 0.05
+	if (ArmorPassiveService :: any).GetRecruitThreshold then
+		recruitThreshold = (ArmorPassiveService :: any).GetRecruitThreshold(actor) or 0.05
+	end
+	-- HD recruit passive: a headgear that "ignores hostility threshold" lets a qualifying enemy be
+	-- recruited regardless of its current HP (no need to weaken it below the HP threshold first).
+	local ignoreRecruitHostility = ArmorPassiveService.CanIgnoreRecruitHostility
+		and ArmorPassiveService.CanIgnoreRecruitHostility(actor) or false
+
+	-- UNIT-TARGET NATIVES (functional now) --------------------------------
+	for _, u in ipairs(allUnits) do
+		if u.id ~= actor.id then
+			local dist = chebyshevDistance(actor.tileX, actor.tileY, u.tileX, u.tileY)
+			if dist <= reach then
+				-- Interact reach honors the ±2 melee elevation rule (treat
+				-- like a reach-1/2 action; Giant tag widens via the helper).
+				local elevOk = isMeleeElevationLegal(actor, u, reach)
+				if elevOk then
+					if u.isAlive and u.eventInteractable and actor.side == "Player" then
+						-- BATTLEFIELD-EVENT NPC (2026-10-04): an authored event
+						-- interaction (Fortune Teller, Wandering Scholar, Merchant
+						-- Caravan, Wandering Bandits, ...). DB rule 131: these are
+						-- event-defined, NOT native Recruit/Aid/Revive, and are not
+						-- affected by the neutral filter. Only Player-side actors may
+						-- use them; BattlefieldEventService clears eventInteractable
+						-- once a one-time interaction is spent.
+						table.insert(candidates, {
+							interactKind = "eventNpc",
+							id = u.id, name = u.name,
+							tileX = u.tileX, tileY = u.tileY,
+						})
+					elseif not u.isAlive then
+						-- KO'd unit: only ALLIES can be resuscitated. Neutral units
+						-- (incl. recruited) are not allies and get no Interact (DB
+						-- rule 131) — so both actor and target must be non-Neutral.
+						if u.side == actor.side and actor.side ~= "Neutral" then
+							table.insert(candidates, {
+								interactKind = "reviveAlly",
+								id = u.id, name = u.name,
+								tileX = u.tileX, tileY = u.tileY,
+							})
+						end
+					elseif u.side == actor.side and actor.side ~= "Neutral" then
+						-- Living ally: RT-help. Neutral/recruited units get no Interact
+						-- (DB rule 131), so a Neutral actor cannot Aid another Neutral.
+						table.insert(candidates, {
+							interactKind = "allyRtHelp",
+							id = u.id, name = u.name,
+							tileX = u.tileX, tileY = u.tileY,
+						})
+					elseif u.isCaptureTarget and u.side == "Enemy" then
+						-- QUEST GOAL Capture (game_flow 41, build step 5 2026-11-17): the capture target is
+						-- NEVER a recruit candidate. A Player unit (not a summon / item device; recruits are
+						-- Neutral) may Capture it once it is at exactly 1 HP (its HP can't go below 1,
+						-- UnitSchema.IsKoProtected). Normal Interact reach (checked above).
+						if actor.side == "Player" and not actor.isSummon and not actor.isItemDevice
+							and (u.currentHp or 0) <= 1 and not u.captured then
+							table.insert(candidates, {
+								interactKind = "captureTarget",
+								id = u.id, name = u.name,
+								tileX = u.tileX, tileY = u.tileY,
+							})
+						end
+					elseif u.side ~= "Neutral" and not u.recruited then
+						-- Living ENEMY (opposite side, not a Neutral/already-recruited
+						-- unit): recruit if at/under the HP threshold AND
+						-- tier-eligible. Native rule (CTRBLXAI.db "Native — Recruit
+						-- Enemy"): "Cannot recruit bosses, veterans, elites, or any
+						-- unit whose race is not playable." Enemy tier is carried on
+						-- `enemyType` (set by EnemyGenerator: "Grunt"/"Veteran"/
+						-- "Elite"; bosses are hand-crafted, never procedurally
+						-- spawned). Only a Grunt is recruitable; Veteran/Elite and
+						-- any untagged unit are excluded (unknown tier → not
+						-- recruitable). The "non-playable race" clause has no field
+						-- to check yet (RaceData has no `playable` flag and all races
+						-- are currently playable) — a harmless no-op until a
+						-- non-playable race is ever added.
+						local maxHp = u.maxHp or 1
+						local hpFrac = (u.currentHp or 0) / math.max(1, maxHp)
+						local tierEligible = (u.enemyType == "Grunt")
+						-- Recruit targets ENEMIES only: a recruited unit becomes
+						-- Neutral and is no longer an enemy, so it can never be
+						-- re-recruited (guarded above). Require genuine enemy side.
+						local isEnemyOfActor = (u.side == "Enemy") or (actor.side == "Player" and u.side ~= "Player" and u.side ~= "Neutral")
+						-- UTI-017 Recruitment Beacon (2026-10-27): +N points on this enemy's recruit HP threshold.
+						if (hpFrac <= recruitThreshold + (u._recruitBonus or 0) or ignoreRecruitHostility) and tierEligible and isEnemyOfActor then
+							table.insert(candidates, {
+								interactKind = "recruitEnemy",
+								id = u.id, name = u.name,
+								tileX = u.tileX, tileY = u.tileY,
+							})
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- MAP-OBJECT NATIVE (PARKED — Slice 5) --------------------------------
+	-- state.objects holds the generator's placed instances, shape { id, type,
+	-- x, y } (MapService.placeObjects). Read THAT shape here; emit candidate
+	-- fields (objectId/archetypeId/tileX/tileY) that the CommandService Interact
+	-- branch consumes. The command branch resolves activation + free/consumes-
+	-- action from ObjectData.activation; this function only needs reach + existence.
+	if state and state.objects then
+		for _, obj in ipairs(state.objects) do
+			-- Skip objects that can't be interacted with right now: traps, self-firing and
+			-- always-on objects, used single-use objects, and once-per-turn objects this unit
+			-- already used this turn (user ruling 2026-10-26; see IsInteractable).
+			-- HD-009 Demolition Mask (2026-11-06): a wearer may still target a no-effect breakable
+			-- obstacle to break it (the Interact fix removed those from the normal list).
+			local _maskBreak = ObjectEffectService.IsMaskBreakTarget and ObjectEffectService.IsMaskBreakTarget(obj, actor.side)
+				and ArmorPassiveService.CanInteractBreakObjects and ArmorPassiveService.CanInteractBreakObjects(actor)
+			if obj.x and obj.y and (_maskBreak or ObjectEffectService.IsInteractable(obj, actor.id, actor.side, state)) then
+				local dist = chebyshevDistance(actor.tileX, actor.tileY, obj.x, obj.y)
+				if dist <= reach then
+					table.insert(candidates, {
+						interactKind = "mapObject",
+						objectId = obj.id,
+						archetypeId = obj.type,
+						-- Client-visible name (Mimic disguise: a disguised Mimic reads "Treasure Chest").
+						displayType = ObjectEffectService.GetDisplayType(obj, nil),
+						name = ObjectEffectService.GetDisplayType(obj, nil) or obj.id or "Object",
+						tileX = obj.x, tileY = obj.y,
+					})
+				end
+			end
+		end
+	end
+
+	-- HD-015 Mechanist Headgear (DB "Interact on allied objects/summons: restore 1 charge or +500 CT
+	-- duration", 2026-10-29): allied item devices with a lifespan, and objects placed by the actor's
+	-- side that hold charges or a timer. Listed after the normal options on the same tile.
+	if ArmorPassiveService.GetInteractRefreshConfig(actor) and actor.side ~= "Neutral" then
+		for _, u in ipairs(allUnits) do
+			if u.isAlive and u.id ~= actor.id and u.side == actor.side and u.isItemDevice and u.deviceLifeCt ~= nil
+				and chebyshevDistance(actor.tileX, actor.tileY, u.tileX, u.tileY) <= reach then
+				table.insert(candidates, {
+					interactKind = "mechanistRefresh",
+					id = u.id, name = u.name,
+					tileX = u.tileX, tileY = u.tileY,
+				})
+			end
+		end
+		for _, obj in ipairs((state and state.objects) or {}) do
+			if obj.x and obj.y and obj.ownerSide == actor.side and TargetingService.CanMechanistRefreshObject(obj)
+				and chebyshevDistance(actor.tileX, actor.tileY, obj.x, obj.y) <= reach then
+				table.insert(candidates, {
+					interactKind = "mechanistRefresh",
+					objectId = obj.id,
+					name = ObjectEffectService.GetDisplayType(obj, nil) or obj.type or "Object",
+					tileX = obj.x, tileY = obj.y,
+				})
+			end
+		end
+	end
+
+	-- HD-010 Trapfinder Goggles (re-check 2026-10-29): a visible trap (or one of the actor's own side)
+	-- within 1 tile is an Interact target, so the wearer can always disarm it.
+	do
+		local _tc = ArmorPassiveService.GetInteractTrapConfig and ArmorPassiveService.GetInteractTrapConfig(actor) or nil
+		if _tc and state and state.objects and actor.tileX then
+			for _, ob in ipairs(state.objects) do
+				local od = ob.type and ObjectData.Objects and ObjectData.Objects[ob.type]
+				if od and hasTagIn(od.tags, "Trap") and ob.x and ob.y and (not ob.hidden or ob.ownerSide == actor.side)
+					and chebyshevDistance(actor.tileX, actor.tileY, ob.x, ob.y) <= (_tc.disarmRange or 1) then
+					table.insert(candidates, {
+						interactKind = "disarmTrap",
+						name = ObjectEffectService.GetDisplayType(ob, nil) or ob.type or "Trap",
+						tileX = ob.x, tileY = ob.y,
+					})
+				end
+			end
+		end
+	end
+
+	-- HD-014 Hazard Warden Hood (DB "Interact on hazard tile neutralizes it permanently", 2026-10-29):
+	-- every hazard tile in reach, the actor's own tile included.
+	if ArmorPassiveService.CanInteractNeutralizeHazard(actor) and actor.tileX then
+		for dx = -reach, reach do
+			for dy = -reach, reach do
+				local tx, ty = actor.tileX + dx, actor.tileY + dy
+				local effId, terId = TargetingService.GetTileHazards(tx, ty)
+				if effId or terId then
+					table.insert(candidates, {
+						interactKind = "neutralizeHazard",
+						name = effId or terId,
+						tileX = tx, tileY = ty,
+					})
+				end
+			end
+		end
+	end
+
+	return candidates
+end
+
+--------------------------------------------------
+-- ATTACK FOOTPRINT FROM A HYPOTHETICAL ORIGIN (Move-target range preview)
+--
+-- Returns the list of tiles { {tileX=, tileY=}, ... } that `actor` could reach
+-- with a BASIC ATTACK *if it were standing on (originX, originY)* — the attack
+-- range projected from a prospective move-landing tile. Used by the Move prompt
+-- so the client can paint the reachable attack tiles red while the player picks
+-- a destination (standard grid-SRPG move→target preview).
+--
+-- Reuses the EXACT basic-attack gates (chebyshev range band, LoS, melee
+-- elevation) via a shallow actor copy repositioned to the origin, so the LoS
+-- origin and the elevation gate both read the hypothetical landing tile. No
+-- reach rules are duplicated here — range/minRange/RangeModifier come from the
+-- same places GetAttackCandidates uses, so prompt and validation never drift.
+--
+-- This is a FOOTPRINT (every in-reach, in-LoS, elevation-legal tile), not a
+-- target list: it does not require an enemy to be present on the tile. The
+-- server stays the reach authority (ARC-001 / SEC-002); the client only renders.
+--------------------------------------------------
+function TargetingService.GetAttackTilesFromOrigin(actor, allUnits, originX, originY, mapWidth, mapHeight)
+	local tiles = {}
+	if not (actor and originX and originY) then return tiles end
+
+	-- Shallow copy so the hypothetical position does not mutate the live actor.
+	-- getEffectiveElevation / isMeleeElevationLegal read tileX/tileY + Flight off
+	-- this table, so moving the copy moves the whole evaluation to the origin.
+	local ghost = setmetatable({ tileX = originX, tileY = originY }, { __index = actor })
+
+	local range = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
+		+ TraitEffectService.GetAttackRangeModifier(actor) -- Restless / Sniper's Perch (2026-10-23)
+	local minRange = actor.weaponMinRange or 1
+	local atkElev = getEffectiveElevation(ghost)
+
+	for dx = -range, range do
+		for dy = -range, range do
+			local tx, ty = originX + dx, originY + dy
+			-- skip the origin itself and anything off-map
+			if (dx ~= 0 or dy ~= 0) and isInsideMap(tx, ty, mapWidth, mapHeight) then
+				local dist = chebyshevDistance(originX, originY, tx, ty)
+				if dist <= range and dist >= minRange then
+					local pseudoTarget = { tileX = tx, tileY = ty }
+					if TargetingService.HasLineOfSight(originX, originY, tx, ty,
+							allUnits, atkElev, actor.weaponProjectileType, actor.side)
+						and isMeleeElevationLegal(ghost, pseudoTarget, range)
+					then
+						table.insert(tiles, { tileX = tx, tileY = ty })
+					end
+				end
+			end
+		end
+	end
+
+	return tiles
+end
+
+--------------------------------------------------
+-- AREA / SPLASH HITS ON MAP OBJECTS (project_rules 250, USER RULING 2026-11-07 10:53 PM)
+-- Tile lists only; ObjectEffectService.HitObjectsOnTiles lands the hits. Unit hits and tile-effect
+-- spread keep using IsAOEBlocked / GetCleaveTargets / ... unchanged.
+--------------------------------------------------
+
+-- Rule 250 (2): an object that blocks area spread is itself hit; only tiles BEHIND it are shielded.
+-- Same walk as IsAOEBlocked, without its "target tile itself is a blocker" refusal.
+function TargetingService.IsAOEBlockedForObject(centerX, centerY, targetX, targetY)
+	local dx = targetX - centerX
+	local dy = targetY - centerY
+	local steps = math.max(math.abs(dx), math.abs(dy))
+	if steps <= 1 then return false end  -- adjacent tiles never blocked
+	for i = 1, steps - 1 do
+		local t = i / steps
+		local ix = centerX + math.floor(dx * t + 0.5)
+		local iy = centerY + math.floor(dy * t + 0.5)
+		if GameConstants.HasBlockerTag(ix, iy, "BlocksAOE") then
+			return true
+		end
+	end
+	return false
+end
+
+-- Tiles a tile-area pattern strikes, for object hits: the pattern's tiles within +/-2 elevation of
+-- the centre and not behind a BlocksAOE object (same centre and limits as the unit hits).
+-- Returns { {x=, y=}, ... }.
+function TargetingService.GetAreaObjectTiles(aoePattern, actor, centerX, centerY, mapWidth, mapHeight)
+	local out = {}
+	if not (aoePattern and actor and centerX and centerY) then return out end
+	local ok, tiles = pcall(TargetingService.GetAOETargetTiles, aoePattern, actor, centerX, centerY, mapWidth, mapHeight)
+	if not ok or type(tiles) ~= "table" then return out end
+	local cElev = GameConstants.GetElevation(centerX, centerY)
+	for _, t in ipairs(tiles) do
+		if t.tileX and t.tileY and math.abs(GameConstants.GetElevation(t.tileX, t.tileY) - cElev) <= 2
+			and not TargetingService.IsAOEBlockedForObject(centerX, centerY, t.tileX, t.tileY) then
+			table.insert(out, { x = t.tileX, y = t.tileY })
+		end
+	end
+	return out
+end
+
+-- Tiles a weapon-shaped splash strikes BESIDE its primary tile (px, py), same geometry and +/-2
+-- elevation rules as the unit helpers: "Cleave" / "Adjacent" / "arc" = the 2 flank tiles next to the
+-- attacker (GetCleaveTargets); "ImpactSplash" / "splash" = the 4 cardinal tiles (GetImpactSplashTargets);
+-- "Line2" / "line" = the tile behind (GetLine2Targets). primaryUnit (optional) = the unit on the
+-- primary tile, for its effective elevation. Returns { {x=, y=}, ... }; never the primary tile.
+function TargetingService.GetSplashTilesBeside(actor, pattern, px, py, primaryUnit)
+	local out = {}
+	if not (actor and actor.tileX and actor.tileY and px and py) then return out end
+	if pattern == "Cleave" or pattern == "Adjacent" or pattern == "arc" then
+		local dx = px - actor.tileX
+		local dy = py - actor.tileY
+		local p1x, p1y, p2x, p2y
+		if dx == 0 then
+			p1x, p1y, p2x, p2y = -1, dy, 1, dy
+		elseif dy == 0 then
+			p1x, p1y, p2x, p2y = dx, -1, dx, 1
+		else
+			p1x, p1y, p2x, p2y = dx, 0, 0, dy
+		end
+		local atkElev = getEffectiveElevation(actor)
+		for _, t in ipairs({ { x = actor.tileX + p1x, y = actor.tileY + p1y }, { x = actor.tileX + p2x, y = actor.tileY + p2y } }) do
+			if not (t.x == px and t.y == py) and math.abs(GameConstants.GetElevation(t.x, t.y) - atkElev) <= 2 then
+				table.insert(out, t)
+			end
+		end
+	elseif pattern == "ImpactSplash" or pattern == "splash" then
+		local e = if primaryUnit then getEffectiveElevation(primaryUnit) else GameConstants.GetElevation(px, py)
+		for _, t in ipairs({ { x = px, y = py - 1 }, { x = px, y = py + 1 }, { x = px - 1, y = py }, { x = px + 1, y = py } }) do
+			if math.abs(GameConstants.GetElevation(t.x, t.y) - e) <= 2 then
+				table.insert(out, t)
+			end
+		end
+	elseif pattern == "Line2" or pattern == "line" or pattern == "Line3" then
+		local rdx = px - actor.tileX
+		local rdy = py - actor.tileY
+		local dx = if rdx == 0 then 0 elseif rdx > 0 then 1 else -1
+		local dy = if rdy == 0 then 0 elseif rdy > 0 then 1 else -1
+		if dx ~= 0 or dy ~= 0 then
+			local e = if primaryUnit then getEffectiveElevation(primaryUnit) else GameConstants.GetElevation(px, py)
+			-- Line 3 (Spear, 2026-11-21): the 2 tiles behind; Line 2 / augment "line": 1 tile.
+			for step = 1, (if pattern == "Line3" then 2 else 1) do
+				local bx, by = px + dx * step, py + dy * step
+				if math.abs(GameConstants.GetElevation(bx, by) - e) <= 2 then
+					table.insert(out, { x = bx, y = by })
+				end
+			end
+		end
+	end
+	return out
+end
+
+return TargetingService

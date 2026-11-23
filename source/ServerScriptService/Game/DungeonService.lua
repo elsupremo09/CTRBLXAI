@@ -552,6 +552,10 @@ function DungeonService.GetBattleSpec(playerId: string, rank: number): (boolean,
 		stage = run.stage, goldMult = DungeonRules.StageGoldMult(run.stage), -- rule 263
 		difficulty = run.card.difficulty, biome = run.card.biome, condition = run.card.condition,
 		facilityLevel = run.card.facilityLevel, battles = run.battles,
+		-- BUG-124 (BUG-HUNT-02): every dungeon battle deploys 7 (project_rules 265); the room quest uses it.
+		deploySlots = DungeonRules.Data.DeployMax,
+		-- BUG-142: dungeon-only enemy-count multiplier (one shared pair in DungeonRules.Data).
+		enemyMultMin = DungeonRules.Data.EnemyMultMin, enemyMultSpan = DungeonRules.Data.EnemyMultSpan,
 		dropMultiplier = DungeonRules.DropMultiplier(run.battles, run.dropBonus, DungeonRules.RunDropCap(run)),
 		lootScale = DungeonRules.LootRollScale(run.battles, played, run.card.facilityLevel, run.dropBonus, DungeonRules.RunDropCap(run)),
 		rarityFortuneBonus = DungeonRules.RarityFortuneBonus(played, run.card.facilityLevel),

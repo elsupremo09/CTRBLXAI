@@ -283,14 +283,18 @@ end
 
 --- Enemy count target for a quest. `roll` is one rng:NextNumber() in [0, 1). rank nil = the Rank 9+
 --- rule (dungeon rooms / test arena). Ranks 1-8: 3, 4 or 5 (uniform), never from roster size.
-function RenownRules.EnemyCountTarget(rank: number?, deploySlots: number, roll: number): number
+--- BUG-142 (2026-11-22): multMin / multSpan (optional) replace Data.EnemyMultMin / EnemyMultSpan for the
+--- Rank 9+ formula; only dungeon rooms pass them (DungeonRules.Data.EnemyMultMin / EnemyMultSpan). nil = quests.
+function RenownRules.EnemyCountTarget(rank: number?, deploySlots: number, roll: number, multMin: number?, multSpan: number?): number
 	local slots = math.max(1, toInt(deploySlots, 1))
 	local r = math.clamp(tonumber(roll) or 0, 0, 1)
 	if rank ~= nil and RenownRules.IsNewPlayerRank(rank) then
 		local span = D.NewPlayerEnemyMax - D.NewPlayerEnemyMin + 1
 		return math.clamp(D.NewPlayerEnemyMin + math.floor(r * span), D.NewPlayerEnemyMin, D.NewPlayerEnemyMax)
 	end
-	return math.max(1, math.floor(slots * (D.EnemyMultMin + r * D.EnemyMultSpan) + 0.5))
+	local lo = multMin or D.EnemyMultMin
+	local span = multSpan or D.EnemyMultSpan
+	return math.max(1, math.floor(slots * (lo + r * span) + 0.5))
 end
 
 --- Highest enemy total after goal extras (Capture +1, Kill target +1 Elite leader): Ranks 1-8 = 5

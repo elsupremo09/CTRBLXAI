@@ -394,7 +394,7 @@ ItemEffectService.IsBuffExtendItem = isBuffExtendItem
 -- undispellable.
 local function isPickableDebuff(statusId: any): boolean
 	local d = GameConstants and GameConstants.STATUSES and GameConstants.STATUSES[statusId]
-	return d ~= nil and d.kind == "Debuff" and d.dispellable ~= false
+	return d ~= nil and d.kind == "Debuff" and d.dispellable ~= false and d.undispellable ~= true
 end
 
 -- Fixed choices for the prompt (nil when the item has none). Purification lists the
@@ -414,7 +414,7 @@ function ItemEffectService.GetItemChoices(def: any, unit: any, state: any): any
 		for _, u in ipairs((state and state.units) or {}) do
 			if u.isAlive and unit and u.side == unit.side then
 				for _, inst in ipairs(u.statusInstances or {}) do
-					if not seen[inst.id] and isPickableDebuff(inst.id) then
+					if not seen[inst.id] and isPickableDebuff(inst.id) and not (StatusService and StatusService.IsUndispellable and StatusService.IsUndispellable(inst)) then -- WARN-1: weather-locked too
 						seen[inst.id] = true
 						table.insert(out, inst.id)
 					end
@@ -998,7 +998,12 @@ local function tryRevive(target: any, formula: string, result: any, allUnits: an
 	if UnitSchema and UnitSchema.ClearChannelState then
 		UnitSchema.ClearChannelState(target)  -- never return holding a pre-death channel
 	end
-	target._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
+	-- kill-credit rule (2026-10-26) + revive counter (BUG-143); same guard style as ClearChannelState above.
+	if UnitSchema and UnitSchema.MarkRevived then
+		UnitSchema.MarkRevived(target)
+	else
+		target._revivedThisBattle = true
+	end
 	target.currentHp = reviveHp
 	StatusService.WeakenVenomOnHeal(target)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 	target.remainingRt = tonumber(revRt) or target.startingRt or 400
@@ -1759,7 +1764,7 @@ local function tryRtDelay(user: any, target: any, def: any, formula: string, res
 	rawDelay = math.round(rawDelay * TraitEffectService.GetRtDelayInflictMultiplier(user))
 	local targetVit = (target.effectiveStats and target.effectiveStats.VIT) or 10
 	local gearResist = (target.gearDerived and target.gearDerived.rtDelayResist) or 1
-	local actualDelay = GameConstants.CalcRtDelayResistance(rawDelay, targetVit, gearResist)
+	local actualDelay = GameConstants.CalcRtDelayResistance(rawDelay, targetVit, gearResist, target) -- BUG-158 boss x0.5
 	actualDelay = math.max(0, actualDelay)
 	target.remainingRt = (target.remainingRt or 0) + actualDelay
 	result.effectType = "RtDelay"
@@ -2003,7 +2008,7 @@ end
 local function rtDelayOn(unit: any, raw: number)
 	local vit = (unit.effectiveStats and unit.effectiveStats.VIT) or 10
 	local gear = (unit.gearDerived and unit.gearDerived.rtDelayResist) or 1
-	local d = math.max(0, GameConstants.CalcRtDelayResistance(raw, vit, gear))
+	local d = math.max(0, GameConstants.CalcRtDelayResistance(raw, vit, gear, unit)) -- BUG-158 boss x0.5
 	unit.remainingRt = (unit.remainingRt or 0) + d
 	return d
 end

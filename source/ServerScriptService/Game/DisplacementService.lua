@@ -42,6 +42,17 @@ local ObjectData = require(
 
 local DisplacementService = {}
 
+-- BUG-217 (batch 18, Tester pass 7): the AI scores an offensive Push by dry-running ResolvePush (pure, moves
+-- nobody), and every dry run printed "[DisplacementService] Push | ... Moved:1 to (15,11)" / "Push RESISTED",
+-- which read like real pushes. ResolvePushPreview runs the same resolver with those prints off unless
+-- DEBUG_PREVIEW_PRINTS is true. Real pushes print as before.
+local DEBUG_PREVIEW_PRINTS = false
+local _previewDepth = 0
+local function dprint(...)
+	if _previewDepth > 0 and not DEBUG_PREVIEW_PRINTS then return end
+	print(...)
+end
+
 --------------------------------------------------
 -- MAP DIMENSIONS (set by caller or default to 8×8)
 --------------------------------------------------
@@ -174,9 +185,16 @@ end
 -- Stability (after the pusher's stability ignore). Reads unit state only; never writes it.
 -- ignoreGuard (2026-10-29): GL-012 Crushing Vambraces -- Guard-based push defences (BD-002 negate,
 -- BD-004 +3 Stability) do not apply.
-function DisplacementService.CalcPushDistance(target, force, isRanged, stabilityIgnore, ignoreGuard)
+-- why (optional, BUG-231 batch 19): a table; when given, why.reason is set to the plain-English reason a
+-- distance of 0 came out (immune / boss / Stability / Fortress Plate / Grounding Harness). Read-only.
+function DisplacementService.CalcPushDistance(target, force, isRanged, stabilityIgnore, ignoreGuard, why)
 	-- Steadfast Strike augment: displacement-immune this round -> cannot be moved.
-	if target._displacementImmune then
+	-- BUG-177 (batch 14, core_stats 55 "Bosses cannot be pushed"): a boss (shared GameConstants.IsBoss) is
+	-- never moved either, so every push / knockback / pull preview and distance shows 0.
+	if target._displacementImmune or GameConstants.IsBoss(target) then
+		if type(why) == "table" then
+			why.reason = if target._displacementImmune then "target is displacement-immune this round (Steadfast Strike)" else "target is a boss (bosses cannot be pushed)"
+		end
 		return 0, 0
 	end
 	local targetStability = StatCalcService.GetStability(target, "battle", ignoreGuard)
@@ -189,6 +207,9 @@ function DisplacementService.CalcPushDistance(target, force, isRanged, stability
 		targetStability = math.max(0, targetStability - stabilityIgnore)
 	end
 	local pushDistance = math.max(0, force - targetStability)
+	if type(why) == "table" and pushDistance == 0 then
+		why.reason = string.format("target Stability %d >= push Force %d", targetStability, force)
+	end
 	-- Armor (2026-10-24): BD-002 Fortress Plate negates incoming push entirely while Guarding;
 	-- BD-008 Grounding Harness reduces forced displacement distance by 2 (always active). Deferred
 	-- require avoids any load-time cycle.
@@ -196,9 +217,18 @@ function DisplacementService.CalcPushDistance(target, force, isRanged, stability
 		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
 		if pushDistance > 0 and not ignoreGuard and StatusService.HasStatus(target, "Guard") and _aps.CanGuardNegatePush(target) then
 			pushDistance = 0
+			if type(why) == "table" then
+				why.reason = "target is Guarding in Fortress Plate (BD-002 negates the push)"
+			end
 		else
 			local dispRed = _aps.GetDisplacementReduction(target)
-			if dispRed > 0 then pushDistance = math.max(0, pushDistance - dispRed) end
+			if dispRed > 0 then
+				local before = pushDistance
+				pushDistance = math.max(0, pushDistance - dispRed)
+				if type(why) == "table" and before > 0 and pushDistance == 0 then
+					why.reason = string.format("target's Grounding Harness (BD-008) cuts the push from %d to 0", before)
+				end
+			end
 		end
 	end
 	-- Ranged knockback penalty: knockback from a RANGED attack is reduced by 50%,
@@ -223,11 +253,21 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	-- Steadfast Strike augment (2026-10-24): a unit flagged displacement-immune this round
 	-- cannot be pushed/pulled. Return the standard RESISTED shape (no movement) so every
 	-- caller stays nil-safe. Flag is set in OnSkillComplete and cleared at the unit's EndTurn.
-	if target._displacementImmune then
+	-- BUG-177 (batch 14, core_stats 55): a boss is never pushed, knocked back or pulled (same RESISTED shape,
+	-- so every caller logs its existing "push ... is blocked" line). Was only enforced for the Harpoon pull.
+	if target._displacementImmune or GameConstants.IsBoss(target) then
+		-- BUG-231 (batch 19, Studio pass 9): this path printed nothing, so a 0-tile push had no reason in the
+		-- output. It now prints why and returns it as resistReason (read by the push log line).
+		local _immReason = if target._displacementImmune then "target is displacement-immune this round (Steadfast Strike)" else "target is a boss (bosses cannot be pushed)"
+		dprint(string.format(
+			"[DisplacementService] Push RESISTED | %s -> %s | Distance: 0 | Reason: %s",
+			pusher.name, target.name, _immReason
+		))
 		return {
 			pushed = false, tilesDisplaced = 0,
 			finalTileX = target.tileX, finalTileY = target.tileY,
 			wallCollision = nil, fallDamage = nil, blockedBy = nil, totalFallHeight = 0,
+			resistReason = _immReason,
 		}
 	end
 
@@ -247,21 +287,30 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	local isGlobalPush = (sourceModifier == GameConstants.KNOCKBACK_SOURCE_MODIFIERS.GlobalPush)
 	local _pushCfg = isGlobalPush and (require :: any)(script.Parent.ArmorPassiveService).GetPushCollisionConfig(pusher) or nil
 	local crushIgnoreGuard = _pushCfg ~= nil and _pushCfg.type == "Crush" and _pushCfg.ignoreGuard == true
-	local pushDistance, targetStability = DisplacementService.CalcPushDistance(target, force, isRanged, stabilityIgnore, crushIgnoreGuard)
+	local _why = {} -- BUG-231: why the distance came out 0 (set by CalcPushDistance)
+	local pushDistance, targetStability = DisplacementService.CalcPushDistance(target, force, isRanged, stabilityIgnore, crushIgnoreGuard, _why)
 	if preResolved and requestedDistance ~= nil then
 		pushDistance = math.max(0, math.floor(requestedDistance))
 		requestedDistance = nil
+		_why.reason = if pushDistance == 0 then "the pre-resolved distance was 0 (every hit resisted)" else nil
 	end
 	-- Distance control: pusher may request a shorter stop distance (fixed direction).
 	-- nil = full distance (AI / legacy callers). Clamp to [0, maxDistance] (SEC-001).
 	if requestedDistance ~= nil then
+		local _beforeReq = pushDistance
 		pushDistance = math.min(pushDistance, math.max(0, math.floor(requestedDistance)))
+		if _beforeReq > 0 and pushDistance == 0 then
+			_why.reason = "the requested stop distance was 0"
+		end
 	end
 
 	if pushDistance == 0 then
-		print(string.format(
-			"[DisplacementService] Push RESISTED | %s (Force %d) -> %s (Stability %d) | Distance: 0",
-			pusher.name, force, target.name, targetStability
+		-- BUG-231 (batch 19, Studio pass 9): the line now names the real reason (it always read as Stability,
+		-- even when Fortress Plate / Grounding Harness / a 0 stop distance did it), and the result carries it.
+		local _reason = _why.reason or string.format("target Stability %d >= push Force %d", targetStability, force)
+		dprint(string.format(
+			"[DisplacementService] Push RESISTED | %s (Force %d) -> %s (Stability %d) | Distance: 0 | Reason: %s",
+			pusher.name, force, target.name, targetStability, _reason
 		))
 		return {
 			pushed         = false,
@@ -272,6 +321,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			fallDamage     = nil,
 			blockedBy      = nil,
 			totalFallHeight = 0,
+			resistReason   = _reason,
 		}
 	end
 
@@ -340,7 +390,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			wallCollisionResult = {
 				damage = GameConstants.CalcWallCollisionDamage(
 					target.maxHp, blockedTiles, pusher.effectiveStats.STR,
-					"StoneWall", sourceModifier
+					"StoneWall", sourceModifier, target -- BUG-160: boss x0.25 (core_stats 41)
 				),
 				colliderType = "edge",
 			}
@@ -355,7 +405,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			wallCollisionResult = {
 				damage = GameConstants.CalcWallCollisionDamage(
 					target.maxHp, blockedTiles, pusher.effectiveStats.STR,
-					blockerType, sourceModifier
+					blockerType, sourceModifier, target -- BUG-160
 				),
 				colliderType = blockerType,
 			}
@@ -370,7 +420,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			wallCollisionResult = {
 				damage = GameConstants.CalcWallCollisionDamage(
 					target.maxHp, blockedTiles, pusher.effectiveStats.STR,
-					"StoneWall", sourceModifier
+					"StoneWall", sourceModifier, target -- BUG-160: boss x0.25 (core_stats 41)
 				),
 				colliderType = "elevation",
 			}
@@ -391,7 +441,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			wallCollisionResult = {
 				damage = GameConstants.CalcWallCollisionDamage(
 					target.maxHp, blockedTiles, pusher.effectiveStats.STR,
-					"Unit", sourceModifier
+					"Unit", sourceModifier, target -- BUG-160
 				),
 				colliderType = "Unit",
 				collidedUnitId = occupant.id,
@@ -399,7 +449,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 				-- Same formula: both units absorb the same impact.
 				collidedUnitDamage = GameConstants.CalcWallCollisionDamage(
 					occupant.maxHp, blockedTiles, pusher.effectiveStats.STR,
-					"Unit", sourceModifier
+					"Unit", sourceModifier, occupant -- BUG-160: the collided unit's own boss modifier
 				),
 			}
 			break
@@ -437,12 +487,15 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		and not StatusService.HasStatus(target, "Flight") then
 		local _apsSlide = (require :: any)(script.Parent.ArmorPassiveService)
 		if _apsSlide.CanAvoidIceSlide(target) then
-			print(string.format("[DisplacementService] Ice Cleats: %s does not slide", target.name))
+			dprint(string.format("[DisplacementService] Ice Cleats: %s does not slide", target.name))
 		else
 			local savedX, savedY = target.tileX, target.tileY
 			target.tileX, target.tileY = currentX, currentY  -- ResolveSlide skips the sliding unit by identity
-			local slide = TileCrossEffectService.ResolveSlide(target, currentX, currentY, dx, dy, allUnits, _mapWidth, _mapHeight)
+			-- BUG-221 (batch 18b, Tester W4): pcall so the unit's real tile is ALWAYS restored, even if ResolveSlide
+			-- errors (preview and real pushes); the error is then raised again unchanged.
+			local okS, slide = pcall(TileCrossEffectService.ResolveSlide, target, currentX, currentY, dx, dy, allUnits, _mapWidth, _mapHeight)
 			target.tileX, target.tileY = savedX, savedY
+			if not okS then error(slide, 0) end
 			for _ = 1, (slide and slide.tilesSlid or 0) do
 				currentX += dx
 				currentY += dy
@@ -489,7 +542,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		if fhBonus > 0 then totalFallHeight = totalFallHeight + fhBonus end
 	end
 	if totalFallHeight >= GameConstants.FALL_DAMAGE_MIN_HEIGHT then
-		fallDamage = GameConstants.CalcFallDamage(target.maxHp, totalFallHeight)
+		fallDamage = GameConstants.CalcFallDamage(target.maxHp, totalFallHeight, target) -- BUG-160: boss x0.25 (core_stats 41)
 	end
 	-- Perks & Flaws (2026-10-23): Acrophobic (x1.5) / Sure-Footed (x0.5) scale the BASE
 	-- fall damage. CalcFallDamage has no VIT term, so its output IS the "base fall damage
@@ -517,7 +570,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	-- (any downward displacement, any height). ONLY the fall-damage term is zeroed;
 	-- cross effects and landing-tile / chasm-floor ground effects resolve normally.
 	if fallDamage > 0 and RacePassiveService.IsFallDamageImmune(target) then
-		print(string.format("[DisplacementService] Feline Nine Lives: %s fall damage %d -> 0", target.name, fallDamage))
+		dprint(string.format("[DisplacementService] Feline Nine Lives: %s fall damage %d -> 0", target.name, fallDamage))
 		fallDamage = 0
 	end
 	-- FELINE — Nine Lives: collision / knockback-impact damage received +20%, for the
@@ -581,18 +634,22 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		-- BONE PILLAR (objects_encounters row 121; movement_targeting 16, 2026-11-07): after the normal
 		-- wall-collision damage (1.3x impact), add a flat round(Max HP x 0.15 x Boss HP% Modifier) ONCE
 		-- per collision - not scaled by blocked tiles, STR, knockback source or the collision mults
-		-- above. Boss HP% Modifier = 1 (same stub as GameConstants.CalcWallCollisionDamage). The
+		-- above. Boss HP% Modifier = BOSS_RULES.hpPctEnvironmental (BUG-160, same as CalcWallCollisionDamage). The
 		-- Bleed is applied by the caller (CommandService applyForcedEntryEffects). Read-only here.
 		if wallCollisionResult.colliderType == "Bone Pillar" and (wallCollisionResult.damage or 0) > 0 then
 			local _bpDef = ObjectData and ObjectData.Objects and ObjectData.Objects["Bone Pillar"]
 			local _bpPct = (_bpDef and _bpDef.collisionExtraMaxHpPct) or 0.15
-			local _bossMod = 1.0
+			local _bossMod = GameConstants.GetBossMod(target, "hpPctEnvironmental") -- BUG-160 (core_stats 41)
 			wallCollisionResult.damage = wallCollisionResult.damage + math.round((target.maxHp or 0) * _bpPct * _bossMod)
 			wallCollisionResult.bonePillar = true
 		end
 	end
 
 	-- Build result.
+	-- BUG-231 (batch 19): a Throwing Gloves throw with no legal landing tile moves 0 tiles with no blocker;
+	-- name that reason too, so no 0-tile push is left without one.
+	local _arcNoLanding = if arcPush and tilesDisplaced == 0 and blockedBy == nil
+		then "Throwing Gloves: no legal landing tile in range" else nil
 	local result = {
 		pushed          = tilesDisplaced > 0,
 		tilesDisplaced  = tilesDisplaced,
@@ -604,10 +661,11 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		totalFallHeight = totalFallHeight,
 		crossEffects    = #crossEffects > 0 and crossEffects or nil,
 		tilesPath       = tilesPath,
+		resistReason    = _arcNoLanding,
 	}
 
-	print(string.format(
-		"[DisplacementService] Push | %s -> %s | Force:%d Stab:%d Dist:%d | Moved:%d to (%d,%d)%s%s%s",
+	dprint(string.format(
+		"[DisplacementService] Push | %s -> %s | Force:%d Stab:%d Dist:%d | Moved:%d to (%d,%d)%s%s%s%s",
 		pusher.name, target.name,
 		force, targetStability, pushDistance,
 		tilesDisplaced, currentX, currentY,
@@ -620,10 +678,24 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 				or ""
 		) or "",
 		fallDamage > 0 and string.format(" | FallDmg:%d (drop %d)", fallDamage, totalFallHeight) or "",
-		blockedBy and (" | BlockedBy:" .. blockedBy) or ""
+		blockedBy and (" | BlockedBy:" .. blockedBy) or "",
+		_arcNoLanding and (" | Reason: " .. _arcNoLanding) or ""
 	))
 
 	return result
+end
+
+-- BUG-217 (batch 18): ResolvePush for scoring only (AIService offensive-push dry run). Same arguments and result;
+-- its prints (and TileCrossEffectService's) are off unless DEBUG_PREVIEW_PRINTS is true. ResolvePush is pure, so
+-- nothing moves either way. The quiet state is restored even when the resolver errors (the error is re-raised).
+function DisplacementService.ResolvePushPreview(...)
+	_previewDepth += 1
+	local prevQuiet = TileCrossEffectService.SetQuiet and TileCrossEffectService.SetQuiet(not DEBUG_PREVIEW_PRINTS) or false
+	local ok, res = pcall(DisplacementService.ResolvePush, ...)
+	_previewDepth -= 1
+	if TileCrossEffectService.SetQuiet then TileCrossEffectService.SetQuiet(prevQuiet) end
+	if not ok then error(res, 0) end
+	return res
 end
 
 --------------------------------------------------

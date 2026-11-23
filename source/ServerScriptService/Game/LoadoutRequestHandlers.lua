@@ -119,6 +119,11 @@ end
 function LoadoutRequestHandlers.SetGate(g: any) dungeonGate = g end
 --- Shared with DungeonLoadout (run end): the unit's live skill list from its doctrine skill + skill cards.
 function LoadoutRequestHandlers.RebuildSkillIds(unit: any) rebuildSkillIds(unit) end
+--- BUG-129 (2026-11-22): the same HP/MP sync, for Main's post-battle step (recovery / KO clear write the
+--- saved record only). Exposed so there is still ONE sync helper (DAT-001), not a copy in Main.
+function LoadoutRequestHandlers.SyncPersistentResources(unitId: string, unit: any)
+	syncPersistentResources(unitId, unit)
+end
 
 function LoadoutRequestHandlers.Init(deps)
 	playerUnits   = deps.playerUnits
@@ -174,7 +179,7 @@ function LoadoutRequestHandlers.Init(deps)
 Handlers.GetRosterData = function(player)
 	local roster = {}
 	for unitId, unit in pairs(playerUnits) do
-		local pState = PersistentStateService.GetUnitState(PLAYER_ID, unitId)
+		local res = PersistentStateService.GetDisplayResources(PLAYER_ID, unitId, unit)
 		local loadout = EquipmentService.GetLoadout(unit)
 		local mainItem = loadout and loadout.MainHand
 		local offHandItem = loadout and loadout.OffHand
@@ -186,11 +191,14 @@ Handlers.GetRosterData = function(player)
 		roster[unitId] = {
 			name = unit.name,
 			level = unit.level or 1,
-			currentHp = pState and pState.currentHp or unit.currentHp,
-			maxHp = pState and pState.maxHp or unit.maxHp,
-			currentMp = pState and pState.currentMp or unit.currentMp,
-			maxMp = pState and pState.maxMp or unit.maxMp,
-			isKO = pState and pState.isKO or false,
+			-- BUG-125 redo (2026-11-22): SAVED record first (what the next battle applies at start),
+			-- live unit only as fallback. Same shared read as Units / Dispatch / Choose Party
+			-- (PersistentStateService.GetDisplayResources), so every screen agrees with the battle.
+			currentHp = res.currentHp,
+			maxHp = res.maxHp,
+			currentMp = res.currentMp,
+			maxMp = res.maxMp,
+			isKO = res.isKO,
 			equippedWeapon = mainItem and mainItem.instanceId or "none",
 			equippedWeaponName = mainItem and (WeaponData.GetByArchetypeId(mainItem.baseArchetypeId) or {}).name or "none",
 			equippedOffHandName = offHandItem and (WeaponData.GetByArchetypeId(offHandItem.baseArchetypeId) or {}).name or "none",
@@ -1044,6 +1052,9 @@ Handlers.GetUnitFullStats = function(player, unitId)
 	-- doctrine passives. GetTrait returns nil safely if a unit somehow has no trait.
 	local perkEntry = unit.perkIds and unit.perkIds[1] and TraitData.GetTrait(unit.perkIds[1]) or nil
 	local flawEntry = unit.drawbackIds and unit.drawbackIds[1] and TraitData.GetTrait(unit.drawbackIds[1]) or nil
+	-- BUG-135 (Tester UAT batch 9b W2, DAT-001): HP/MP through the ONE menu display read (saved record
+	-- first), the same source as Units / Loadout / Dispatch / Choose Party.
+	local res = PersistentStateService.GetDisplayResources(PLAYER_ID, unitId, unit)
 
 	return {
 		ok = true,
@@ -1065,8 +1076,8 @@ Handlers.GetUnitFullStats = function(player, unitId)
 		statAllocation = unit.statAllocation or {},
 		unallocatedPoints = getUnallocatedPoints(unit),
 		-- Resources
-		currentHp = unit.currentHp, maxHp = unit.maxHp,
-		currentMp = unit.currentMp, maxMp = unit.maxMp,
+		currentHp = res.currentHp, maxHp = res.maxHp,
+		currentMp = res.currentMp, maxMp = res.maxMp,
 		-- EXP (2026-11-13): same source as the guild Units screen (GetUnitLevelProgress).
 		expProgress = ProgressionService.GetUnitLevelProgress(PLAYER_ID, unitId),
 		-- Race

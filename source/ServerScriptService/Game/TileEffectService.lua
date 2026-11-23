@@ -923,6 +923,18 @@ function TileEffectService.ProcessCtTick(ctElapsed, allUnits)
 										if _bvb and _bvb.DotDamage then
 											_bvb.DotDamage(u, eff.id, _shown0)
 										end
+										-- BUG-295 (batch 28, Studio pass 19): a tile-tick KO sets off the ally-KO reactions
+										-- (Hemophage / Sluggish Finisher) right after its KO line, the same path as the BUG-214 /
+										-- BUG-202 KO reactions. They used to wait for Main's sweep after the whole clock advance.
+										-- {} = no active unit: Sluggish Finisher's AP loss is held for the unit's next turn
+										-- (same as Main's sweep for a clock-advance KO). Deferred require: no load-order tie.
+										if not u.isAlive then
+											local _crOk, _cr = pcall(require, script.Parent.CombatResolver)
+											if _crOk and _cr and _cr.FlushAllyKoReactions then
+												_cr.FlushAllyKoReactions(allUnits, {})
+											end
+											if _bvb and _bvb.FlushLog then _bvb.FlushLog() end
+										end
 									end
 								end
 							end
@@ -961,7 +973,9 @@ end
 --------------------------------------------------
 
 -- Cross effect: applied when unit moves THROUGH a tile
-function TileEffectService.OnUnitEntersTile(unit, tileX, tileY)
+-- deferList (optional, BUG-207 batch 17): CommandService passes it for a push / pull / knockback, so the status
+-- line goes right after that push's line (BattleVisualBroadcaster.EntryStatus).
+function TileEffectService.OnUnitEntersTile(unit, tileX, tileY, deferList)
 	local eff = effects[tileKey(tileX, tileY)]
 	if not eff or not unit.isAlive then return end
 
@@ -977,14 +991,25 @@ function TileEffectService.OnUnitEntersTile(unit, tileX, tileY)
 				unit.name, eff.id
 			))
 		else
-			_statusService.ApplyStatus(unit, def.crossEffect, eff.ownerId or "tile")
+			local _had = _statusService.HasStatus and _statusService.HasStatus(unit, def.crossEffect)
+			_statusService.ApplyStatus(unit, def.crossEffect, eff.ownerId or "tile",
+			(def.crossEffect == "Burn" and _statusService.StandardFireHitDamage) and _statusService.StandardFireHitDamage(unit) or nil)  -- BUG-301: tile Burn stored 0
 			print(string.format(
 				"[TileEffectService] Cross effect: %s on %s (entering %s at %d,%d)",
 				def.crossEffect, unit.name, eff.id, tileX, tileY
 			))
 			-- Battle log (rules 225): the cross status had no broadcast; name the tile effect.
-			if _bvb and _bvb.UnitStateChanged then
-				_bvb.UnitStateChanged(unit, `{eff.id} tile`)
+			-- BUG-207 (batch 17, BUG-204 recurrence): was a caused UnitStateChanged, whose HP diff ran inside the held
+			-- hit and logged the hit's own damage as "Poison Cloud tile hit X for 28." plus the status line, both
+			-- BEFORE the hit and push lines. Now one status line only (no HP diff), after the push line. A status the
+			-- unit already had (refreshed) is not logged, as before; the client still gets the refresh.
+			if _bvb then
+				local _now = _statusService.HasStatus and _statusService.HasStatus(unit, def.crossEffect)
+				if _now and not _had and _bvb.EntryStatus then
+					_bvb.EntryStatus(unit, def.crossEffect, `{eff.id} tile`, deferList)
+				elseif _bvb.StatusSync then
+					_bvb.StatusSync(unit)
+				end
 			end
 		end
 	end
@@ -1114,8 +1139,13 @@ function TileEffectService.OnUnitStartTurn(unit)
 	if not def then return end
 
 	-- Occupy effects: inflict status
-	if def.occupyEffect and _statusService then
-		_statusService.ApplyStatus(unit, def.occupyEffect, eff.ownerId or "tile")
+	-- BUG-206 (batch 16c): a unit immune to the tile's status (Undead/Mechanical vs Poison Cloud)
+	-- got "gains Poison from Poison Cloud tile." then "is no longer Poison" every turn. Ask the
+	-- shared StatusService.IsImmune first and skip silently when immune.
+	if def.occupyEffect and _statusService
+		and not (_statusService.IsImmune and _statusService.IsImmune(unit, def.occupyEffect)) then
+		_statusService.ApplyStatus(unit, def.occupyEffect, eff.ownerId or "tile",
+			(def.occupyEffect == "Burn" and _statusService.StandardFireHitDamage) and _statusService.StandardFireHitDamage(unit) or nil)  -- BUG-301: tile Burn stored 0
 		print(string.format(
 			"[TileEffectService] Occupy effect: %s on %s (standing on %s at %d,%d)",
 			def.occupyEffect, unit.name, eff.id, unit.tileX, unit.tileY
@@ -1128,7 +1158,9 @@ function TileEffectService.OnUnitStartTurn(unit)
 		if _bvb then
 			local inst = _statusService.HasStatus and _statusService.HasStatus(unit, def.occupyEffect)
 			if _bvb.StatusApplied then
-				_bvb.StatusApplied(unit, def.occupyEffect, inst and inst.remainingTurns or nil)
+				-- BUG-201 (batch 16): name the tile ("gains Poison from Poison Cloud tile (5 turns)."); the line had
+				-- no cause, and the UnitStateChanged below found nothing left to log.
+				_bvb.StatusApplied(unit, def.occupyEffect, inst and inst.remainingTurns or nil, nil, nil, nil, `{eff.id} tile`)
 			end
 			if _bvb.UnitStateChanged then _bvb.UnitStateChanged(unit, `{eff.id} tile`) end  -- rules 225 label
 		end
@@ -1327,8 +1359,9 @@ local function collapseTile(tx, ty, allUnits)
 	if allUnits and drop > 0 then
 		for _, u in ipairs(allUnits) do
 			if u.isAlive and u.tileX == tx and u.tileY == ty then
-				u.remainingRt = (u.remainingRt or 0) + 50
-				print(string.format("[TileEffectService] %s rides collapse: +50 RT (now %d)", u.name, u.remainingRt))
+				local _colRt = GameConstants.ApplyBossRtDelay(u, 50) -- BUG-158: boss x0.5 (core_stats 42)
+				u.remainingRt = (u.remainingRt or 0) + _colRt
+				print(string.format("[TileEffectService] %s rides collapse: +%d RT (now %d)", u.name, _colRt, u.remainingRt))
 				-- Fall damage: existing fall-damage rule applies when the drop is a
 				-- forced downward displacement of >= FALL_DAMAGE_MIN_HEIGHT.
 				-- BD-013 Feather Armor: a Guarding wearer's effective fall height is 2 lower (re-check 2026-10-29).
@@ -1342,7 +1375,7 @@ local function collapseTile(tx, ty, allUnits)
 				end
 				local fall = 0
 				if _fallH >= GameConstants.FALL_DAMAGE_MIN_HEIGHT then
-					fall = GameConstants.CalcFallDamage(u.maxHp, _fallH)
+					fall = GameConstants.CalcFallDamage(u.maxHp, _fallH, u) -- BUG-160: boss x0.25 (core_stats 41)
 				end
 				-- Sure-Footed / Acrophobic (re-check 2026-10-29): same fall multiplier as push falls.
 				if fall > 0 then

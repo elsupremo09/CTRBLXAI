@@ -538,10 +538,11 @@ buildSoloDetailContent = function(panel, item, viewerUnitId)
 					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
 			end
 		elseif item.isWeapon then
-			-- Weapon: Attack, Range, Defense, WT, RT Delay
+			-- Weapon: Attack, Range, Pattern (batch 8; only when not Single), Defense, WT, RT Delay
 			local weaponStats = {
 				{ label = "Attack", value = bs.Attack },
 				{ label = "Range", value = bs.Range },
+				{ label = "Pattern", value = bs.Pattern },
 				{ label = "Defense", value = bs.Defense },
 				{ label = "WT", value = bs.WT },
 				{ label = "RT Delay", value = bs.RTDelay },

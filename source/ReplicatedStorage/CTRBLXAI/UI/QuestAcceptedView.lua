@@ -242,8 +242,12 @@ end
 
 -- Party face row (2026-11-20 9:32 PM user): small framed portraits under "Party:", each with a thin
 -- HP and MP bar so the player sees a hurt or unavailable unit before Embark. Away units are greyed.
+-- PT-06 (batch 8, 2026-11-22): "Deploy up to {n} units" vs a 7-face row -- available members past
+-- the deploy limit (party order, the same cap as the Choose party "Deploying {n} units" count) get
+-- the same "Unavailable" wash as away units. No new text. deployLimit nil = no cap shown.
 local FACE = 32
-local function partyFaces(sc: Instance, members: { any }, order: number)
+local function partyFaces(sc: Instance, members: { any }, order: number, deployLimit: number?)
+	local availableSeen = 0
 	local row = Instance.new("Frame")
 	row.Name = "PartyFaces"
 	row.BackgroundTransparency = 1
@@ -295,7 +299,9 @@ local function partyFaces(sc: Instance, members: { any }, order: number)
 		end
 		bar(FACE + 2, mi.hp, mi.maxHp, Theme.Colors.HP)
 		bar(FACE + 6, mi.mp, mi.maxMp, Theme.Colors.MP)
-		if mi.away then
+		if not mi.away then availableSeen += 1 end
+		local isBeyondLimit = (not mi.away) and deployLimit ~= nil and availableSeen > deployLimit
+		if mi.away or isBeyondLimit then
 			local img = face:FindFirstChild("PortraitImage")
 			if img and img:IsA("ImageLabel") then img.ImageColor3 = Color3.fromRGB(120, 120, 120) end
 			local wash = Instance.new("Frame")
@@ -407,7 +413,10 @@ local function renderInspector(q: any, st: State)
 		add(pText, bodyT, rarityColor(pRarity), true)
 	end
 	add(`Party: {st.partyName or TXT_PARTY_DEFAULT}`, bodyT, Theme.Colors.TextPrimary, true)
-	if type(st.members) == "table" and #st.members > 0 then partyFaces(sc, st.members, nextOrder()) end
+	if type(st.members) == "table" and #st.members > 0 then
+		local limit = tonumber(q.playerSlots)
+		partyFaces(sc, st.members, nextOrder(), if limit then math.floor(limit) else nil)
+	end
 	sc.Parent = screen.Side
 end
 

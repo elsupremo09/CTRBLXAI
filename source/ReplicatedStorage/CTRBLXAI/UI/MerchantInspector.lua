@@ -72,6 +72,7 @@ local QUEUED_DIM = 0.5        -- overlay transparency for pending tiles ("dim on
 local WEAPON_STATS = {
 	{ label = "Attack", field = "damage" },
 	{ label = "Range", field = "range" },
+	{ label = "Pattern", field = "patternLabel" }, -- batch 8: ItemDisplay patternLabel ("Line 3"); nil = no row
 	{ label = "Defense", field = "defense" },
 	{ label = "WT", field = "wt" },
 	{ label = "RT Delay", field = "rtDelay" },
@@ -260,7 +261,15 @@ local function fillInspector(list: Instance, entry: Entry)
 	addLine(list, nextOrder(), "PASSIVES", Theme.Text.Small(), Theme.Colors.TextGold, true)
 	local pName = if detail.isArmor then detail.passiveName else detail.nativePassiveName
 	local pDesc = if detail.isArmor then detail.passiveDesc else detail.nativePassiveDesc
-	if pName then
+	if not detail.isArmor and type(detail.nativePassives) == "table" and #detail.nativePassives > 0 then
+		-- BUG-106: every built-in passive (Boomerang: Tricky + Rebound).
+		for _, np in ipairs(detail.nativePassives) do
+			addLine(list, nextOrder(), tostring(np.name or np.id), Theme.Text.Body(), Theme.Colors.Success, true)
+			if np.desc and np.desc ~= "" then
+				addLine(list, nextOrder(), tostring(np.desc), Theme.Text.Small(), Theme.Colors.TextPrimary)
+			end
+		end
+	elseif pName then
 		addLine(list, nextOrder(), tostring(pName), Theme.Text.Body(), Theme.Colors.Success, true)
 		if pDesc and pDesc ~= "" then
 			addLine(list, nextOrder(), tostring(pDesc), Theme.Text.Small(), Theme.Colors.TextPrimary)

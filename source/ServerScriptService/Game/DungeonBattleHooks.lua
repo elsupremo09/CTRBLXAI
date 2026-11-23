@@ -71,6 +71,21 @@ local function applyDepth(u: any)
 	end
 end
 
+-- RL-60 BLACK LANTERN ("Enemies have 10% more HP"). One helper for battle start AND mid-battle arrivals
+-- (BUG-234, batch 19, user decision: reinforcements, a woken Mimic and event enemies get it too, through the
+-- same EnemyGenerator arrival hook as the Depth bonus). Same math as before (BUG-220 / BUG-225): a battle-only
+-- Max HP bonus, multiplicative with the boss / depth bonus in battleMaxHpBonusPct, kept by every rebuild.
+-- Once per unit (_dgLanternApplied). Summons are skipped, like the Depth bonus.
+local _lanternOn = false
+local function applyLantern(u: any)
+	if not _lanternOn or u.side ~= "Enemy" or u.isSummon or u.isAlive == false or u._dgLanternApplied then return end
+	u._dgLanternApplied = true
+	local before = u.maxHp or 0
+	u.battleMaxHpBonusPct = (1 + (tonumber(u.battleMaxHpBonusPct) or 0)) * (1 + DungeonRules.Data.Relic.LanternHpPct / 100) - 1
+	EquipmentService.RebuildUnitStats(u)
+	u.currentHp = math.min(u.maxHp, (u.currentHp or 0) + (u.maxHp - before))
+end
+
 -- Battle start. ctx = { playerId, quest, units, party, dungeonBattle }. Returns the held-relic set and RL-09 state.
 function DungeonBattleHooks.ApplyBattleStart(ctx: any): ({ [string]: boolean }, any)
 	local PLAYER_ID, selectedQuest, allUnitsList, dungeonParty, dungeonBattle = ctx.playerId, ctx.quest, ctx.units, ctx.party, ctx.dungeonBattle
@@ -81,12 +96,14 @@ function DungeonBattleHooks.ApplyBattleStart(ctx: any): ({ [string]: boolean }, 
 	local dgSecondWind: any = nil
 	local dgStacks: { [string]: number } = {} -- step 6: depth curse stacks (RL-61..65 add up)
 	_depthHp, _depthAtk = 0, 0 -- Depth bonus off unless this is a stage 4+ dungeon battle (rule 281)
+	_lanternOn = false -- BUG-234: Black Lantern off unless this dungeon battle holds RL-60
 	if dungeonBattle then
 		if selectedQuest and selectedQuest.dungeonPlayed == "Boss" then
 			local okR, rid = pcall(DungeonService.GrantBossRelic, PLAYER_ID)
 			if not okR then warn("[Main] Boss relic failed: " .. tostring(rid)) end
 		end
 		for _, id in DungeonService.GetRelics(PLAYER_ID) do dgRelics[id] = true end
+		_lanternOn = dgRelics["RL-60"] == true
 		if DungeonService.CurseStacks then dgStacks = DungeonService.CurseStacks(PLAYER_ID) end
 		local R = DungeonRules.Data.Relic
 		if dgRelics["RL-09"] then dgSecondWind = { used = false, hpPct = R.SecondWindHpPct } end
@@ -238,11 +255,11 @@ function DungeonBattleHooks.ApplyBattleStart(ctx: any): ({ [string]: boolean }, 
 			elseif u.side == "Enemy" and u.isAlive then
 				if dgRelics["RL-43"] then u._dgMoveBonus = (u._dgMoveBonus or 0) + R.ChainsEnemyMove end
 				if dgRelics["RL-44"] then u._dgBaseRtAdd = R.TyrantEnemyRt end
-				if dgRelics["RL-60"] then -- Black Lantern: +10% Max HP (enemies are not saved)
-					local before = u.maxHp or 0
-					u.maxHp = before + math.round(before * R.LanternHpPct / 100)
-					u.currentHp = math.min(u.maxHp, (u.currentHp or 0) + (u.maxHp - before))
-				end
+				-- Black Lantern: +10% Max HP (enemies are not saved). BUG-220 (battle-only Max HP bonus kept by every
+				-- rebuild) and BUG-225 (multiplicative with the boss / depth bonus) are kept in applyLantern, which the
+				-- mid-battle arrival hook also uses (BUG-234).
+				u._dgLanternApplied = nil
+				applyLantern(u)
 				if dgRelics["RL-31"] then -- Withering Mist: lose 10% current HP (Boss 5%), never below 1
 					local pct = if u.enemyType == "Boss" or u.isBoss then R.MistBossHpPct else R.MistHpPct
 					u.currentHp = math.max(1, (u.currentHp or 0) - math.floor((u.currentHp or 0) * pct / 100))
@@ -286,7 +303,11 @@ end
 -- Depth bonus for mid-battle enemy arrivals (reinforcements, a woken Mimic, event enemies).
 do
 	local okEG, EG = pcall(function() return require(Game:WaitForChild("EnemyGenerator")) end)
-	if okEG and EG and EG.AddArrivalHook then EG.AddArrivalHook("depth", applyDepth) end
+	-- BUG-234 (batch 19): Black Lantern too, in ONE hook and in the battle-start order (Depth adds to
+	-- battleMaxHpBonusPct, the Lantern multiplies it; EnemyGenerator runs its extra hooks in no fixed order).
+	if okEG and EG and EG.AddArrivalHook then
+		EG.AddArrivalHook("depth", function(u: any) applyDepth(u); applyLantern(u) end)
+	end
 end
 
 -- Expedition Fortune for this battle: base + RL-06 Lucky Charm. RL-45 Reaver's Pact no longer lowers

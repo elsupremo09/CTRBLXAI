@@ -45,6 +45,12 @@ DungeonRules.Data = table.freeze({
 	-- Dungeon party (step 7b, project_rules 258/265/267; USER RULINGS 2026-11-14 10:13-10:30 AM):
 	PartyCaps = table.freeze({ 7, 7, 7, 8, 8, 8, 9, 9, 9, 10 }), -- by facility level
 	DeployMax = 7,       -- only 7 fight per battle; the rest wait on the bench (bench EXP)
+	-- BUG-142 (SIM_dungeon_7slots_20261122, user auto-accept 2026-11-22; open_decisions 51 / project_rules
+	-- 265 note): dungeon rooms (Normal, Elite, Boss) roll enemies = round(DeployMax x [1.7, 2.1)) instead
+	-- of the quest x[2.0, 2.5) (RenownRules.EnemyCountTarget, same single roll): 12-15 at 7 slots; an
+	-- Elite room adds its leader (+1); a Boss room = the Boss + 11-14. Board quests are unchanged.
+	EnemyMultMin = 1.7,
+	EnemyMultSpan = 0.4,
 	BringInsPerRest = 1, -- Edit party: at most 1 unit brought in per Rest room (Sim v7)
 	AllBiomes = ALL_BIOMES,
 	-- project_rules 258 / guild_facilities 87

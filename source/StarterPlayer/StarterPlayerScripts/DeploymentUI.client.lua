@@ -486,10 +486,18 @@ local function createRosterUI(playerUnits, awayUnits)
 	-- Slice 6 Guild menu: units away on dispatch / benched are shown greyed out
 	-- after the placeable units (display only; never added to rosterEntries).
 	awayUnits = awayUnits or {}
-	local unitCount = math.max(1, math.min(#playerUnits + #awayUnits, 8))
+	-- BUG-122 (BUG-HUNT-03, 2026-11-22): every PLACEABLE unit gets a cell (a dungeon party can hold
+	-- 10; the old 8-cell cap left members 9 and 10 clipped and untappable). Greyed away cells only
+	-- fill up to the old 8. Cells shrink (never below 32 px) so the strip still fits the screen.
+	local maxCells = math.max(8, #playerUnits)
+	local unitCount = math.max(1, math.min(#playerUnits + #awayUnits, maxCells))
 	local cellSize = math.clamp(math.floor(vh * 0.13), 40, 64)
 	local cellGap  = math.clamp(math.floor(vw * 0.004), 3, 6)
 	local stripPad = 8
+	do
+		local fitW = math.floor(vw * 0.62) - stripPad * 2 - (unitCount - 1) * cellGap
+		cellSize = math.max(32, math.min(cellSize, math.floor(fitW / unitCount)))
+	end
 	local stripW   = unitCount * cellSize + (unitCount - 1) * cellGap + stripPad * 2
 	local stripH   = cellSize + stripPad * 2
 
@@ -540,7 +548,7 @@ local function createRosterUI(playerUnits, awayUnits)
 	local lowHpCount = 0
 	local lowMpCount = 0
 	for i, unitInfo in ipairs(playerUnits) do
-		if i > 8 then break end
+		if i > maxCells then break end
 
 		local entry = {
 			id         = unitInfo.id,
@@ -755,7 +763,7 @@ local function createRosterUI(playerUnits, awayUnits)
 
 	-- Greyed, non-interactive cells for units that cannot deploy this battle.
 	for j, awayInfo in ipairs(awayUnits) do
-		if #playerUnits + j > 8 then break end
+		if #playerUnits + j > maxCells then break end
 		-- 2026-11-20 9:23 PM user: unavailable units show their NORMAL portrait (face, frame, Lv,
 		-- name), greyed out and not tappable. The old "MA / AWAY" letters + reason text are gone.
 		local awayCell = Instance.new("Frame")
@@ -1007,6 +1015,13 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 		source   = "deployment",
 	})
 	CameraController.EnterBattle(Vector3.new(centerX, 0, centerZ))
+	-- BUG-107 (PT-05): show the Battlefield > View toggle (Isometric/Top/Side) from the start of
+	-- deployment so blocked deploy tiles can be reached from Top view. Must run AFTER cleanup()
+	-- above (it calls BattleHUD.Cleanup). Camera control follows the camera's own lock state.
+	if BattleHUD and BattleHUD.EnsureDeploymentControls then
+		local camLocked = CameraController.IsInputLocked and CameraController.IsInputLocked() or false
+		pcall(BattleHUD.EnsureDeploymentControls, not camLocked)
+	end
 
 	-- Collapse template inspector if open
 	if type(_G.CTRBLXAI_SetInspectorCollapsed) == "function" then

@@ -104,7 +104,8 @@ end
 --   onTap    = tap handler (default: open the Loadout for the unit)
 --   selected = gold outline (the selected-row look of the Quest Party picker / mission rows)
 --   tag      = dim the card with this tag (e.g. "QUEUED"); default: AWAY / Exploring a dungeon when away
-local function makeCard(grid: Instance, u: any, order: number, opts: { onTap: (() -> ())?, selected: boolean?, tag: string? }?)
+--   lowHpMark = red low-HP band on the portrait (PT-15, batch 8: dungeon party picker; UIComponents.ApplyLowHpMark)
+local function makeCard(grid: Instance, u: any, order: number, opts: { onTap: (() -> ())?, selected: boolean?, tag: string?, lowHpMark: boolean? }?)
 	local h = cardHeight()
 	local ps = h - 8
 	local ts = Theme.Text.Small()
@@ -167,6 +168,9 @@ local function makeCard(grid: Instance, u: any, order: number, opts: { onTap: ((
 	badge.TextTruncate = Enum.TextTruncate.None
 	badge.Size = UDim2.fromOffset(Theme.BadgeFitW and Theme.BadgeFitW(lvText, Theme.Font.Mono, 26) or 30, math.max(10, Theme.Text.Tiny()) + 3)
 	badge.ZIndex = 4 -- above the portrait image (face.ZIndex + 1)
+	if opts and opts.lowHpMark and UIComponents and UIComponents.ApplyLowHpMark then
+		UIComponents.ApplyLowHpMark(face, u.hp, u.maxHp)
+	end
 	face.Parent = card
 
 	-- Name (up to 2 rows), race, doctrine.

@@ -165,6 +165,10 @@ local escapeState         = { shown = false, allowed = false } -- EscapeState.av
 
 -- Padding constant
 local PAD = 6
+-- HUD DisplayOrder while deployment is active: above DeploymentUI (15) so the Battlefield >
+-- View toggle and unit panel stay visible/tappable; below Modal (80) and the detailed unit
+-- inspector (140+). Same value BVC passes to SetDisplayOrder at DeploymentPhase. (BUG-107)
+local DEPLOYMENT_HUD_ORDER = 25
 
 -- PHONE TOUCH SIZING (user ruling 2026-11-06): on PHONES ONLY the battle buttons get
 -- the 44 px minimum touch target (Theme.MinSize.TouchTarget; CTRBLXAI.db
@@ -529,7 +533,11 @@ local function ensureRoot()
 	screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "BattleHUD"
 	screenGui.ResetOnSpawn = false
-	screenGui.DisplayOrder = Theme.DisplayOrder.HUD
+	-- BUG-107 (PT-05): during deployment the HUD must sit ABOVE DeploymentUI (15) so the
+	-- Battlefield > View toggle and the unit panel are tappable. BVC's SetDisplayOrder(25) at
+	-- DeploymentPhase was a no-op when the HUD did not exist yet, so a HUD built later in
+	-- deployment came up at 10. Pick the order here instead; battle keeps Theme.DisplayOrder.HUD.
+	screenGui.DisplayOrder = if _G.CTRBLXAI_DeploymentActive then DEPLOYMENT_HUD_ORDER else Theme.DisplayOrder.HUD
 	screenGui.IgnoreGuiInset = true
 	screenGui.Parent = getPlayerGui()
 
@@ -725,6 +733,13 @@ local function ensureRoot()
 	end
 
 	-- View stays open after a tap so the player can cycle Isometric -> Top -> Side.
+	-- BUG-107 (PT-05): the HUD is rebuilt at BattleStarted (Cleanup resets the label to
+	-- Isometric) but the camera keeps the mode picked in deployment, so read the real mode.
+	-- GetCameraViewMode is injected by BattleVisualClient (CameraController.GetViewMode).
+	if BattleHUD.GetCameraViewMode then
+		local okMode, liveMode = pcall(BattleHUD.GetCameraViewMode)
+		if okMode and type(liveMode) == "string" then currentCameraMode = liveMode end
+	end
 	viewModeViewBtn = menuButton("ViewToggle", currentCameraMode, 1,
 		isViewMode and Theme.Colors.TextGold or Theme.Colors.TextPrimary, Theme.BattleButtonIcons.View)
 	viewModeViewBtn.Activated:Connect(function() BattleHUD.CycleCameraMode() end)
@@ -4071,6 +4086,18 @@ end
 -- leaves it at the default. No-op until ensureRoot has created the ScreenGui. (2026-10-15)
 function BattleHUD.SetDisplayOrder(order: number)
 	if screenGui then screenGui.DisplayOrder = order end
+end
+
+-- BUG-107 (PT-05): DeploymentUI calls this right after its phase-start cleanup so the
+-- Battlefield button (View toggle) exists from the first frame of deployment instead of
+-- only after the first map tap. Builds the HUD root only (all panels start hidden), puts it
+-- above DeploymentUI, and re-syncs the View button with the camera lock (a lock left on
+-- by the previous battle's BattleEnded would otherwise keep View dimmed and ignoring taps).
+-- Adds no input handlers: tile taps stay with DeploymentUI (placement) and BVC (inspection).
+function BattleHUD.EnsureDeploymentControls(cameraEnabled: boolean?)
+	ensureRoot()
+	if screenGui then screenGui.DisplayOrder = DEPLOYMENT_HUD_ORDER end
+	if cameraEnabled ~= nil then BattleHUD.SetCameraControlEnabled(cameraEnabled) end
 end
 
 -- Set the element the tile inspector aligns to during DEPLOYMENT (the roster strip),

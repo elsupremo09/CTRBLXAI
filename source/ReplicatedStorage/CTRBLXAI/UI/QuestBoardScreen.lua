@@ -323,18 +323,29 @@ end
 -- (parchment v2, 1536x1024: 55/62/53/67) is the live value; the table below is only the fallback.
 local SHEET_MARGIN: { left: number, top: number, right: number, bottom: number } =
 	(ART.CardSheetMargin :: any) or { left = 26, top = 64, right = 25, bottom = 64 }
+local CARD_ASPECT = 0.55 -- card height = width x this (at least what the lines need)
 
-local function buildCard(q: any, i: number, w: number, h: number, small: number, body: number, sliceScale: number): TextButton
-	local key = questKey(q, i)
-	local selected = key == selId
+-- Slice scale for the parchment (old 9-slice art only; Stretch ignores it): smaller on a phone.
+local function sliceScaleFor(main: any): number
+	local y = main.AbsoluteSize.Y
+	local phone = y > 0 and y < 320
+	return if phone then (ART.CardSliceScalePhone or 0.25) else (ART.CardSliceScale or 0.35)
+end
+
+-- Parchment card shell (split out of buildCard 2026-11-22 so the Dungeon choice cards reuse it, DAT-001):
+-- the parchment sheet, the gold selected glow hugging the visible sheet, and the padded Body frame
+-- (vertical list). Returns the card (NOT parented), Body (parented to the card, caller fills it and
+-- may parent more children) and the sheet insets in px (l, t, r, b) for overlays that cover only the paper.
+local function makeParchmentShell(name: string, order: number, w: number, h: number, sliceScale: number,
+	selected: boolean): (TextButton, Frame, { number })
 	local card = Instance.new("TextButton")
-	card.Name = "Quest_" .. tostring(i)
+	card.Name = name
 	card.Text = ""
 	card.AutoButtonColor = false
 	card.BackgroundTransparency = 1
 	card.BorderSizePixel = 0
 	card.Size = UDim2.fromOffset(w, h)
-	card.LayoutOrder = i
+	card.LayoutOrder = order
 
 	local sheet = Instance.new("ImageLabel")
 	sheet.Name = "Parchment"
@@ -355,24 +366,24 @@ local function buildCard(q: any, i: number, w: number, h: number, small: number,
 	sheet.Active = false
 	sheet.Parent = card
 
+	-- Selected card: gold glow (same gold as the guild selection outlines).
+	-- 2026-11-18 (user 9:08 AM): the outline hugs the visible parchment sheet, not the card box.
+	-- The parchment image has transparent margins (SHEET_MARGIN, image px); with Slice they scale
+	-- by sliceScale. The inset is never smaller than the stroke, so the outline stays inside the
+	-- card and can't be clipped by the grid's edges.
+	local thick = 3
+	-- Stretch: image px scale per axis (card size / image size); Slice: sliceScale on both.
+	local artSize: Vector2? = ART.CardSize
+	local sx = if stretch and artSize then w / artSize.X else sliceScale
+	local sy = if stretch and artSize then h / artSize.Y else sliceScale
+	local function inset(px: number, s: number): number return math.max(thick, math.floor(px * s + 0.5)) end
+	local l, tp, r, bt = inset(SHEET_MARGIN.left or 0, sx), inset(SHEET_MARGIN.top or 0, sy), inset(SHEET_MARGIN.right or 0, sx), inset(SHEET_MARGIN.bottom or 0, sy)
 	if selected then
-		-- Selected card: gold glow (same gold as the guild selection outlines).
-		-- 2026-11-18 (user 9:08 AM): the outline hugs the visible parchment sheet, not the card box.
-		-- The parchment image has transparent margins (SHEET_MARGIN, image px); with Slice they scale
-		-- by sliceScale. The inset is never smaller than the stroke, so the outline stays inside the
-		-- card and can't be clipped by the grid's edges.
-		local thick = 3
-		-- Stretch: image px scale per axis (card size / image size); Slice: sliceScale on both.
-		local artSize: Vector2? = ART.CardSize
-		local sx = if stretch and artSize then w / artSize.X else sliceScale
-		local sy = if stretch and artSize then h / artSize.Y else sliceScale
-		local function inset(px: number, s: number): number return math.max(thick, math.floor(px * s + 0.5)) end
 		local frame = Instance.new("Frame")
 		frame.Name = "SelectedFrame"
 		frame.BackgroundTransparency = 1
 		frame.BorderSizePixel = 0
 		frame.Active = false
-		local l, tp, r, bt = inset(SHEET_MARGIN.left or 0, sx), inset(SHEET_MARGIN.top or 0, sy), inset(SHEET_MARGIN.right or 0, sx), inset(SHEET_MARGIN.bottom or 0, sy)
 		frame.Position = UDim2.fromOffset(l, tp)
 		frame.Size = UDim2.new(1, -(l + r), 1, -(tp + bt))
 		frame.Parent = card
@@ -397,6 +408,14 @@ local function buildCard(q: any, i: number, w: number, h: number, small: number,
 	list.Padding = UDim.new(0, 1)
 	list.SortOrder = Enum.SortOrder.LayoutOrder
 	list.Parent = body_
+	body_.Parent = card
+	return card, body_, { l, tp, r, bt }
+end
+
+local function buildCard(q: any, i: number, w: number, h: number, small: number, body: number, sliceScale: number): TextButton
+	local key = questKey(q, i)
+	local selected = key == selId
+	local card, body_ = makeParchmentShell("Quest_" .. tostring(i), i, w, h, sliceScale, selected)
 
 	local titleLbl = cardLine(body_, tostring(q.name or ""), body, titleColor(q, INK), true, 1, 2)
 	if titleLbl then -- user 2026-11-18 9:35 PM: black outline only on the coloured lines (title, promised gear)
@@ -460,7 +479,6 @@ local function buildCard(q: any, i: number, w: number, h: number, small: number,
 		pl.TextStrokeColor3 = Color3.new(0, 0, 0)
 		pl.TextStrokeTransparency = 0
 	end
-	body_.Parent = card
 
 	-- Boss card: the existing Boss skull icon in the top-right corner (no text).
 	if isBoss(q) and Theme.DungeonRoomIcons and Theme.DungeonRoomIcons.Boss then
@@ -559,9 +577,8 @@ local function renderBoard()
 	local gridW = mainW - GAP * 2 - 6 - 2 -- minus the 2px left pad
 	local cardW = math.max(140, math.floor((gridW - GAP * (COLS - 1)) / COLS))
 	local needH = CARD_PAD_TOP + CARD_PAD_BOTTOM + (body * 2 + 2) + (small + 2) * 4 + math.max(ICON, small + 2) + 8
-	local cardH = math.max(needH, math.floor(cardW * 0.55))
-	local phone = (main :: any).AbsoluteSize.Y > 0 and (main :: any).AbsoluteSize.Y < 320
-	local sliceScale = if phone then (ART.CardSliceScalePhone or 0.25) else (ART.CardSliceScale or 0.35)
+	local cardH = math.max(needH, math.floor(cardW * CARD_ASPECT))
+	local sliceScale = sliceScaleFor(main)
 	local layout = Instance.new("UIGridLayout")
 	layout.CellSize = UDim2.fromOffset(cardW, cardH)
 	layout.CellPadding = UDim2.fromOffset(GAP, GAP)
@@ -747,5 +764,18 @@ end
 function QuestBoardScreen.SetStatus(text: string, isError: boolean?)
 	if screen then screen.SetStatus(text, isError) end
 end
+
+-- Shared parchment card (2026-11-22, DAT-001): the Quest Board card look for other screens (the
+-- Dungeon choice cards). Same sheet, selected glow, pads, ink colours, line style, title colour by
+-- difficulty, height ratio and slice scale as the board -- one place for all of them.
+QuestBoardScreen.Parchment = table.freeze({
+	Make = makeParchmentShell,   -- (name, order, w, h, sliceScale, selected) -> card, body, {l, t, r, b}
+	Line = cardLine,             -- (parent, text, size, color, bold?, order, lines?) -> TextLabel?
+	TitleColor = titleColor,     -- (card with .difficulty 1-5, fallback) -> Color3
+	SliceScaleFor = sliceScaleFor, -- (main) -> number
+	Ink = INK, InkSoft = INK_SOFT,
+	PadX = CARD_PAD_X, PadTop = CARD_PAD_TOP, PadBottom = CARD_PAD_BOTTOM,
+	Gap = GAP, Aspect = CARD_ASPECT,
+})
 
 return table.freeze(QuestBoardScreen)

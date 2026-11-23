@@ -38,6 +38,7 @@ local ObjectData = require(
 		:WaitForChild("ObjectData")
 )
 
+local DEBUG_NO_ROUTE = false  -- BUG-151 (A4): AI "no route" geometry print
 -- Quest main goals (read-only data, safe direct require): the Protect bias numbers (step 6).
 local QuestGoalData = require(
 	game:GetService("ReplicatedStorage")
@@ -472,8 +473,15 @@ local function scoreAttack(unit: any, target: any, dials: any, allUnits: any)
 		if dist >= tMin and dist <= tMax then
 			local backlash = 0
 			if _CombatResolver then
-				local cr = _CombatResolver.ResolveBasicAttack(target, unit, target.weaponDamage or 10)
-				backlash = (cr.finalDamage or 0) * mult
+				-- batch 8b: Rake counters hit twice (row 163) -> use the shared prediction, which reads
+				-- WeaponPassiveService.GetRakeHits (DAT-001); nil-safe fallback to one hit (ARC-006).
+				if _CombatResolver.PredictBasicAttack then
+					local pr = _CombatResolver.PredictBasicAttack(target, unit, target.weaponDamage or 10, allUnits)
+					backlash = (pr and pr.damage or 0) * mult
+				else
+					local cr = _CombatResolver.ResolveBasicAttack(target, unit, target.weaponDamage or 10)
+					backlash = (cr.finalDamage or 0) * mult
+				end
 			end
 			score = score - (backlash / math.max(1, unit.maxHp)) * W.DAMAGE_PCT * W.COUNTER_RISK
 		end
@@ -549,6 +557,10 @@ local function scoreSkill(unit: any, def: any, target: any, dials: any, allUnits
 				error(r, 0)
 			end
 			predicted = r.finalDamage or 0
+			-- BUG-110 W1: same Bleed bonus as the previews / real hit (only if the hit reduces HP after shields).
+			if r.type == "Damage" and predicted > 0 then
+				predicted = predicted + _CombatResolver.PredictBleedBonus(target, unit, r.element, predicted, 1)
+			end
 		end
 		local dmgPct = predicted / math.max(1, target.maxHp)
 		score = dmgPct * W.DAMAGE_PCT * dials.damage
@@ -706,7 +718,8 @@ local function enumerateSkillEntries(unit: any, allUnits: any)
 			end
 			-- Skyfall Lance: only targets the caster can land next to (same rule as validation), so the
 			-- AI never picks a cast that is rejected and loses the rest of its turn (UAT 2026-10-27 S-2).
-			if candidates and def.leapsAdjacent and _CommandService.CanLeapTo then
+			-- BUG-183 (batch 14c): Reckless Charge (isCharge) too, same CanLeapTo check (no strike from range).
+			if candidates and (def.leapsAdjacent or def.isCharge) and _CommandService and _CommandService.CanLeapTo then
 				local kept = {}
 				local leapState = { units = allUnits }
 				for _, c in ipairs(candidates) do
@@ -1117,7 +1130,9 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 		-- so the tile that actually leads around the barrier (toward the bridge /
 		-- chokepoint) wins. Falls back to straight-line only for tiles the field cannot
 		-- reach (no walkable route to the player at all), so behavior is never worse.
-		local distField = _TargetingService.ComputeDistanceField(advanceTo.tileX, advanceTo.tileY, mapW, mapH, unit) -- BUG-086: honor this unit's climb limits
+		-- BUG-086: honor this unit's climb limits. BUG-147 (BUG-HUNT-12, accepted): seed from the target's walkable
+		-- neighbour tiles too, so a target on a ledge this unit cannot climb onto is still approachable.
+		local distField = _TargetingService.ComputeDistanceField(advanceTo.tileX, advanceTo.tileY, mapW, mapH, unit, true)
 		local function trueDist(tx: any, ty: any): any
 			local v = distField[tostring(tx) .. "," .. tostring(ty)]
 			if v ~= nil then return v end
@@ -1126,6 +1141,23 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 			return chebyshev(tx, ty, advanceTo.tileX, advanceTo.tileY) + 1000
 		end
 		local curDist = trueDist(unit.tileX, unit.tileY)
+		-- BUG-147 diagnostic (BUG-HUNT-12): still no route after the neighbour seed -> print the goal tile, its
+		-- elevation and its 8 neighbours' elevations (x = off the map) so a Studio log shows the geometry.
+		if DEBUG_NO_ROUTE and curDist >= 1000 then  -- BUG-151 (A4)
+			local _nb = {}
+			for _dy = -1, 1 do
+				for _dx = -1, 1 do
+					if _dx ~= 0 or _dy ~= 0 then
+						local _nx, _ny = advanceTo.tileX + _dx, advanceTo.tileY + _dy
+						local _in = _nx >= 1 and _ny >= 1 and _nx <= mapW and _ny <= mapH
+						table.insert(_nb, string.format("(%d,%d)%s", _nx, _ny, if _in then "e" .. tostring(GameConstants.GetElevation(_nx, _ny)) else "x"))
+					end
+				end
+			end
+			print(string.format("[AIService] %s no route to goal (%d,%d) e%s from (%d,%d) e%s | neighbours %s",
+				unit.name, advanceTo.tileX, advanceTo.tileY, tostring(GameConstants.GetElevation(advanceTo.tileX, advanceTo.tileY)),
+				unit.tileX, unit.tileY, tostring(GameConstants.GetElevation(unit.tileX, unit.tileY)), table.concat(_nb, " ")))
+		end
 		local best: any, bestScore = nil, -math.huge
 		for _, tile in ipairs(moveTiles) do
 			local d = trueDist(tile.tileX, tile.tileY)
@@ -1475,8 +1507,11 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 					force = unit.derivedStats.force
 				end
 				local direction = _DisplacementService.GetPushDirection(unit, foe)
+				-- BUG-217 (batch 18): the scoring dry run uses the quiet preview, so its prints no longer look like real
+				-- pushes in the output ("Push | Deafened Riposte -> Hero | ... Moved:1"). Same resolver, same result.
+				local _resolve = _DisplacementService.ResolvePushPreview or _DisplacementService.ResolvePush
 				local ok, result = pcall(function()
-					return _DisplacementService.ResolvePush(
+					return _resolve(
 						unit, foe, force, direction,
 						GameConstants.KNOCKBACK_SOURCE_MODIFIERS.GlobalPush,
 						allUnits, nil)

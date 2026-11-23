@@ -261,6 +261,16 @@ function UnitSchema.ClearChannelState(unit): boolean
 	return had
 end
 
+-- BUG-143 (BUG-HUNT-15, 2026-11-22): every revive site calls this one helper. _revivedThisBattle is the
+-- kill-credit stamp (2026-10-26, revived units never trigger kill augments); _reviveCount goes up by 1 per
+-- revive, so a command that knocked a unit out AND saw it revived inside the same commit (e.g. a Rescue
+-- Beacon at the KO check) can tell "KO + revive" apart from a heal (BattleTurnController compares it).
+function UnitSchema.MarkRevived(unit)
+	if not unit then return end
+	unit._revivedThisBattle = true
+	unit._reviveCount = (unit._reviveCount or 0) + 1
+end
+
 -- REVIVE TILE (2026-10-28, same rule as Raise Dead and the spreading revives): a unit coming back
 -- where a living unit now stands rises on the nearest free tile within 3 (on the map, not blocked,
 -- impassable or a chasm floor). No free tile = it cannot rise right now. mapW/mapH default to the
@@ -358,14 +368,20 @@ function UnitSchema.ForceKill(unit)
 	UnitSchema.ClearChannelState(unit)
 end
 
-function UnitSchema.Kill(unit)
-	if UnitSchema.IsKoProtected(unit) and unit.isAlive ~= false then
+-- BUG-289 (batch 27, Studio pass 18): ignoreKoFloor = true (dev kill commands only: KillAtTile, DevSetHp kill=true)
+-- KOs the unit even under God Mode / as the Capture target. Every other caller passes nothing (unchanged).
+function UnitSchema.Kill(unit, ignoreKoFloor)
+	if ignoreKoFloor ~= true and UnitSchema.IsKoProtected(unit) and unit.isAlive ~= false then
 		-- Survive at 1 HP so the hit still reads as damage; HP refills at the start of this unit's
 		-- next turn (BattleCoordinator). Clear kill tags so objectives don't count a death.
 		unit.isAlive = true
 		unit.currentHp = math.max(1, unit.currentHp or 0)
 		unit._killCause = nil
 		unit._killedFromFull = nil
+		-- BUG-283 (batch 25, Studio pass 16): name the effect that kept the unit alive, so the skill print and
+		-- the battle-log hit line can say why the HP lost is less than the damage (Holy Smite Dmg:57, 35 -> 1).
+		-- Cleared at the start of every ApplyDamage call, so it only describes the latest damage.
+		unit._koFloorCause = if unit.isCaptureTarget == true then "Capture target" else "God Mode"
 		return
 	end
 	unit.isAlive   = false
@@ -412,6 +428,7 @@ end
 
 function UnitSchema.ApplyDamage(unit, amount, cause, shieldDamageMult, element)
 	assert(amount >= 0, "ApplyDamage: amount must be >= 0.")
+	unit._koFloorCause = nil  -- BUG-283: set again by Kill only if THIS damage hits the KO floor
 	-- One-Punch objective (2026-10-24): was this unit at full HP before this hit?
 	-- Captured before the shield gate / HP subtraction below.
 	local wasFull = (unit.currentHp or 0) >= (unit.maxHp or math.huge)

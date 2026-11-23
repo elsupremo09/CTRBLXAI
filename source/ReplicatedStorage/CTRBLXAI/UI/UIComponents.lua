@@ -16,6 +16,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CTRBLXAI_UI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10)
 local Theme = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
+-- Low-HP marker threshold (persistent_hp_mp_rules 24): the one DEPLOY_LOW_RESOURCE_FRACTION (DAT-001).
+local _gcOk, GameConstants = pcall(function()
+	local shared = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("Shared", 10)
+	local m = shared and shared:WaitForChild("GameConstants", 10)
+	return if m then require(m) else nil
+end)
+if not _gcOk then GameConstants = nil end
+if not GameConstants then warn("[UIComponents] GameConstants missing -- no low-HP marks") end
 
 local UIComponents = {}
 
@@ -148,6 +156,32 @@ function UIComponents.ApplyUnitFrame(slot, opts)
 	for _, c in slot:GetDescendants() do lift(c) end
 	slot.DescendantAdded:Connect(lift) -- dies with the slot
 	return fr
+end
+
+--- Low-HP marker (PT-15, batch 8 2026-11-22): the deployment roster's readiness mark -- a red
+--- (Theme.Colors.Danger) band along the bottom of the portrait -- for party / picker cards, so a
+--- unit under DEPLOY_LOW_RESOURCE_FRACTION of max HP (persistent_hp_mp_rules 24) shows before Embark.
+--- Display only, no text. Same test as DeploymentUI readinessFlags (missing current HP = full).
+--- Returns the band, or nil when the unit is not low.
+local LOW_HP_BAND_MIN_H = 4
+function UIComponents.ApplyLowHpMark(slot, hp, maxHp)
+	if not slot or not GameConstants then return nil end
+	local frac = GameConstants.DEPLOY_LOW_RESOURCE_FRACTION
+	local m = tonumber(maxHp) or 0
+	local c = tonumber(hp) or m
+	if not frac or m <= 0 or c >= m * frac then return nil end
+	local h = math.max(LOW_HP_BAND_MIN_H, math.floor((slot.Size.Y.Offset or 0) * 0.12))
+	local band = slot:FindFirstChild("LowHpMark") or Instance.new("Frame")
+	band.Name = "LowHpMark"
+	band.Size = UDim2.new(1, 0, 0, h)
+	band.Position = UDim2.new(0, 0, 1, -h)
+	band.BackgroundColor3 = Theme.Colors.Danger
+	band.BackgroundTransparency = 0.15
+	band.BorderSizePixel = 0
+	band.Active = false
+	band.ZIndex = (slot.ZIndex or 1) + 3
+	band.Parent = slot
+	return band
 end
 
 --- Try to display an icon. Returns ImageLabel or TextLabel.

@@ -1014,7 +1014,12 @@ local function rtCompute(playerId: string, rec: any, early: boolean)
 			else Rules.ExpForHours(rec.tier, level, hours, lvl, into, cap, xtn) * xpMult
 		if not early and rec.noExp ~= true then raw += (xpFrac[uid] or 0) end
 		local whole = math.max(0, math.floor(raw))
-		table.insert(unitLines, { unitId = uid, xp = whole, frac = if early then 0 else math.clamp(raw - whole, 0, 0.999999) })
+		-- Display only (batch 8): EXP per hour of the hour now running, so the open screen can tick
+		-- "Earned so far" until that hour ends (never past what this walk pays). Not used by the payout.
+		local rate = if rec.noExp == true then 0
+			else Rules.ExpRatePerHourAt(rec.tier, level, hours, lvl, into, cap, xtn) * xpMult
+		table.insert(unitLines, { unitId = uid, xp = whole, frac = if early then 0 else math.clamp(raw - whole, 0, 0.999999),
+			ratePerHour = rate })
 	end
 	local matWhole, matFrac = 0, rec.matFrac or 0
 	if not early and rec.material ~= Rules.NO_MATERIAL then
@@ -1038,7 +1043,8 @@ function DispatchService.RtList(playerId: string)
 		-- rolled at collect, so they cannot be previewed. units = { {unitId, xp} } (arrays, NET-003).
 		local preview = rtCompute(playerId, rec, false)
 		local previewUnits = {}
-		for _, line in preview.unitLines do table.insert(previewUnits, { line.unitId, line.xp }) end
+		-- { unitId, xp, EXP per hour now } (batch 8: the 3rd value is display-only, for the live tick)
+		for _, line in preview.unitLines do table.insert(previewUnits, { line.unitId, line.xp, line.ratePerHour or 0 }) end
 		table.insert(out, {
 			missionId = rec.missionId, tier = rec.tier, material = rec.material,
 			noExp = rec.noExp == true, -- yield: material only (no EXP); old missions sent before 2026-11-20 pay both
@@ -1059,6 +1065,9 @@ function DispatchService.RtList(playerId: string)
 			waitingSeconds = ServerTime.Elapsed(rec.lastCollectAt),
 			fullInSeconds = math.max(0, limit - secs),
 			earnedSoFar = { units = previewUnits, material = rec.material, amount = preview.matWhole },
+			-- Display only (batch 8): the EXP rates above hold until this earned time (end of the hour
+			-- now running); the screen stops the EXP tick there until the next server answer.
+			xpRateUntilSeconds = math.min(limit, (math.floor(preview.hours) + 1) * 3600),
 		})
 	end
 	table.sort(out, function(a, b) return a.missionId < b.missionId end)

@@ -284,7 +284,7 @@ local function removeRandomBuff(unit)
 	local candidates = {}
 	for i, inst in ipairs(unit.statusInstances) do
 		local def = GameConstants.STATUSES[inst.id]
-		if def and def.kind == "Buff" and not def.undispellable then
+		if def and def.kind == "Buff" and not StatusService.IsUndispellable(inst) then
 			table.insert(candidates, i)
 		end
 	end
@@ -303,7 +303,7 @@ local function _removeAllBuffs(unit)
 	while i <= #unit.statusInstances do
 		local inst = unit.statusInstances[i]
 		local def = GameConstants.STATUSES[inst.id]
-		if def and def.kind == "Buff" and not def.undispellable then
+		if def and def.kind == "Buff" and not StatusService.IsUndispellable(inst) then
 			table.insert(removed, inst.id)
 			table.remove(unit.statusInstances, i)
 		else
@@ -319,7 +319,7 @@ local function removeRandomDebuff(unit)
 	local candidates = {}
 	for i, inst in ipairs(unit.statusInstances) do
 		local def = GameConstants.STATUSES[inst.id]
-		if def and def.kind == "Debuff" then
+		if def and def.kind == "Debuff" and not StatusService.IsUndispellable(inst) then
 			table.insert(candidates, i)
 		end
 	end
@@ -855,7 +855,9 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 				local inst = StatusService.HasStatus(defender, statusToApply)
 				if inst then
 					local _augIcon = AugmentData[augId] and AugmentData[augId].icon or nil
-					BattleVisualBroadcaster.StatusApplied(defender, statusToApply, inst.remainingTurns, _augIcon)
+					-- BUG-201 (batch 16): name the augment (e.g. Venomous Support -> Poison), so the line is never uncaused;
+					-- inside a held hit it waits for the hit line (BUG-197 path).
+					BattleVisualBroadcaster.StatusApplied(defender, statusToApply, inst.remainingTurns, _augIcon, nil, nil, augName)
 				end
 				print(string.format(
 					"[AugmentEffect] %s triggered on %s (apply %s)",
@@ -894,18 +896,29 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		elseif augId == "AUG-FORCEFUL-STRIKE" then
 			if not shouldSkipForFrequency(augId) and defender.isAlive then
 				local dir = DisplacementService.GetPushDirection(attacker, defender)
-				augDisplace(attacker, defender, (attacker.derivedStats and attacker.derivedStats.force) or 1, dir, 1, false)  -- push
+				local _kr = augDisplace(attacker, defender, (attacker.derivedStats and attacker.derivedStats.force) or 1, dir, 1, false)  -- push
 				markFired(augId)
-				print(string.format("[AugmentEffect] %s: knocked %s back 1 tile", augName, defender.name))
+				-- BUG-216 (batch 18): say "knocked back" only when the unit really moved (resisted / blocked = 0 tiles).
+				if _kr and _kr.pushed and (_kr.tilesDisplaced or 0) > 0 then
+					print(string.format("[AugmentEffect] %s: knocked %s back %d tile(s)", augName, defender.name, _kr.tilesDisplaced))
+				else
+					print(string.format("[AugmentEffect] %s: %s did not move (resisted or blocked)", augName, defender.name))
+				end
 			end
 
 		elseif augId == "AUG-PULLING-STRIKE" then
 			if not shouldSkipForFrequency(augId) and defender.isAlive then
 				local out = DisplacementService.GetPushDirection(attacker, defender)
 				local dir = { dx = -out.dx, dy = -out.dy }  -- invert: pull toward the caster
-				augDisplace(attacker, defender, (attacker.derivedStats and attacker.derivedStats.force) or 1, dir, 1, true)  -- pull toward the caster
+				local _kr = augDisplace(attacker, defender, (attacker.derivedStats and attacker.derivedStats.force) or 1, dir, 1, true)  -- pull toward the caster
 				markFired(augId)
-				print(string.format("[AugmentEffect] %s: pulled %s 1 tile closer", augName, defender.name))
+				-- BUG-216 (batch 18, Tester pass 7): printed "pulled ... 1 tile closer" after "Push RESISTED ... Distance: 0"
+				-- although the unit never moved. Now only on a real move.
+				if _kr and _kr.pushed and (_kr.tilesDisplaced or 0) > 0 then
+					print(string.format("[AugmentEffect] %s: pulled %s %d tile(s) closer", augName, defender.name, _kr.tilesDisplaced))
+				else
+					print(string.format("[AugmentEffect] %s: %s did not move (resisted or blocked)", augName, defender.name))
+				end
 			end
 
 		-- ===============================================
@@ -938,7 +951,9 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- ===============================================
 		elseif augId == "AUG-DELAY-STRIKE" then
 			if not shouldSkipForFrequency(augId) and defender.isAlive then
-				defender.remainingRt = math.max(1, math.round((defender.remainingRt or 0) * 1.20))
+				local _before = defender.remainingRt or 0
+				local _add = GameConstants.ApplyBossRtDelay(defender, math.round(_before * 0.20)) -- BUG-158
+				defender.remainingRt = math.max(1, _before + _add)
 				markFired(augId)
 				print(string.format("[AugmentEffect] %s: %s's next turn delayed 20%% (RT %d)", augName, defender.name, defender.remainingRt))
 			end
@@ -1573,7 +1588,9 @@ function AugmentEffectService.OnSkillComplete(attacker, skillDef, augmentIds, ct
 							end
 						end
 						if inst then
-							BattleVisualBroadcaster.StatusApplied(u, sid, inst.remainingTurns, icon)
+							-- BUG-197 (batch 16): name the supported skill, so a held cast logs "<unit> is now <status>
+							-- (<skill>)." after the skill's own line (not an uncaused "gains" line before it).
+							BattleVisualBroadcaster.StatusApplied(u, sid, inst.remainingTurns, icon, nil, nil, skillDef and (skillDef.name or skillDef.id) or nil)
 							print(string.format("[AugmentEffect] %s: %s gets %s", augName, u.name, sid))
 						end
 					end

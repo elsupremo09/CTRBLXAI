@@ -426,6 +426,7 @@ local function mapServerItem(si)
 			Attack = si.damage or 0, Range = range,
 			Defense = si.defense or 0, WT = si.wt or 0,
 			RTDelay = si.rtDelay or 0,
+			Pattern = si.patternLabel, -- batch 8: "Line 3" etc. (ItemDisplay); nil = Single, no row (BUG-056 remap)
 		}
 	else
 		-- Real armor HP/MP from the server entry (ItemDisplay.buildItemEntry). Was hard-coded 0,
@@ -438,7 +439,12 @@ local function mapServerItem(si)
 
 	-- Archetype passive
 	local passives = {}
-	if si.nativePassiveId then
+	if type(si.nativePassives) == "table" and #si.nativePassives > 0 then
+		-- BUG-106: every built-in passive (Boomerang: Tricky + Rebound).
+		for _, np in ipairs(si.nativePassives) do
+			table.insert(passives, { name = np.name or np.id, icon = "[*]", desc = np.desc or "" })
+		end
+	elseif si.nativePassiveId then
 		table.insert(passives, {
 			-- Server-supplied name first (same as the Info tab, 2026-10-30); old map as fallback.
 			name = si.nativePassiveName or PASSIVE_NAMES[si.nativePassiveId] or si.nativePassiveId,

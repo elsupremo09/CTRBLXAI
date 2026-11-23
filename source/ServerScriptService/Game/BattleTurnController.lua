@@ -200,6 +200,58 @@ end
 -- marker on the caster's own tile. The marker is offered only when at least one on-map tile exactly 2 away
 -- has a legal step tile (same CommandService.LungeStepTile that validation uses), so Lunge greys out when
 -- nothing can be lunged at. The tile actually aimed at is still checked by validation before any cost.
+-- BUG-185 (batch 15): ONE rule for the "+<status>" on a hit line: only a status this command really applied.
+-- takeStatusSnapshot(u) records the unit's status instances (table identity) and their duration / stack / stored
+-- value before the command; newlyAppliedStatus(u, before, preferId) then returns:
+--   * preferId (the skill's own appliesStatus) when that status is a NEW instance or one the command refreshed,
+--     stacked or accumulated (its stamp changed);
+--   * otherwise the FIRST new instance added by the command whose source is the acting unit (actorId; the skill's
+--     own status lands before augment / passive riders, so a first Counter Stance read "+Recharge"). A status
+--     the unit gave itself because of the hit (Sleep Immunity after being woken) is not the attacker's;
+--   * nil when nothing was applied. A status the unit already had and was refused for (Petrified, Sleep
+--     Immunity, Wardweave Robe) keeps its old instance and stamp, so it is not listed (BUG-174 recurrence:
+--     Rainfall Zone on a Petrified unit that already had Wet read "+Wet" and "gains Wet (4 turns)").
+-- Used by every hit-line builder here (player Attack / Skill / Item, AI commits, channel releases).
+local function statusStamp(inst: any): string
+	return `{tostring(inst.remainingTurns)}|{tostring(inst.remainingCt)}|{tostring(inst.stacks)}|{tostring(inst.storedBurn)}`
+end
+-- BUG-219 (batch 18b, Tester W1): HP a stat-status rebuild capped during a command (StatusService.syncStatStatus
+-- records it as u._statCapLoss and logs its own "Max HP drops" line). Cleared before each commit and after its
+-- hit lines are built, so it is never counted as hit damage.
+local function clearStatCapLoss()
+	for _, u in ipairs((state and state.units) or {}) do
+		u._statCapLoss = nil
+		u._forcedTrapLoss = nil  -- BUG-253 (batch 21): cleared with it, same commit boundaries
+	end
+end
+-- BUG-253 (batch 21, Studio pass 11): HP a trap took while this commit's push / knockback dragged the unit over it
+-- (CommandService springTrap records u._forcedTrapLoss; the trap has its own line after the push line). Not hit damage:
+-- a Gale Thrust knockback onto a Spike Trap read "-45 HP (0/246)" (skill 22 + trap 23). Returns the loss (0 = none).
+local function forcedTrapLoss(u: any): number
+	return if u and type(u._forcedTrapLoss) == "number" and u._forcedTrapLoss > 0 then u._forcedTrapLoss else 0
+end
+local function takeStatusSnapshot(u: any): { [any]: string }
+	local snap = {}
+	if u and u.statusInstances then
+		for _, inst in ipairs(u.statusInstances) do snap[inst] = statusStamp(inst) end
+	end
+	return snap
+end
+local function newlyAppliedStatus(u: any, before: any, preferId: string?, actorId: any): string?
+	if not (u and u.statusInstances and before) then return nil end
+	if preferId then
+		for _, inst in ipairs(u.statusInstances) do
+			if inst.id == preferId and (before[inst] == nil or before[inst] ~= statusStamp(inst)) then
+				return preferId
+			end
+		end
+	end
+	for _, inst in ipairs(u.statusInstances) do
+		if before[inst] == nil and (actorId == nil or inst.sourceUnitId == actorId) then return inst.id end
+	end
+	return nil
+end
+
 local function hasLungeAimTile(unit: any): boolean
 	for dy = -2, 2 do
 		for dx = -2, 2 do
@@ -255,6 +307,10 @@ local function buildTurnPrompt(unit)
 				and not CommandService.IsPinBlockedSkill(unit, def)  -- Pinned: no leap/dash/step skills (rule 253, 2026-11-08)
 				and not CommandService.IsDualWieldBlockedSkill(unit, def)  -- Dual Wield exclusive (2026-10-28)
 				and not CommandService.IsHpCostBlockedSkill(unit, def)  -- Blood Price at <= 15% HP (2026-11-08)
+				-- BUG-119 (BUG-HUNT-24): Silence (blocks.Skills) / Stun-type (blocks.All) -- the SAME
+				-- canonical check the commit uses (STEP 3b StatusService.IsActionBlocked), like the
+				-- Move / Attack gates below (PT-08). The skill list then shows its normal grayed entry.
+				and not StatusService.IsActionBlocked(unit, "Skill")
 			local candidates, computedRange = TargetingService.GetSkillCandidates(unit, state.units, def)
 			-- Weapon minimum range (2026-10-30): same shared formula the server validates with
 			-- (CalcSkillRange 2nd return = weapon min for weapon-range skills, else 0; it does not
@@ -285,7 +341,9 @@ local function buildTurnPrompt(unit)
 					continue
 				end
 				-- Skyfall Lance: hide targets with no free landing tile (validation would reject them).
-				if def.leapsAdjacent and not c.isGroundTarget and not CommandService.CanLeapTo(unit, c, state) then
+				-- BUG-183 (batch 14c): Reckless Charge (isCharge) too - same CanLeapTo check, so the prompt
+				-- (and its preview) only offers targets the charge can reach melee range of.
+				if (def.leapsAdjacent or def.isCharge) and not c.isGroundTarget and not CommandService.CanLeapTo(unit, c, state) then
 					continue
 				end
 				-- Lunge (2026-11-08): only targets exactly 2 tiles away with a free tile to step onto.
@@ -343,6 +401,12 @@ local function buildTurnPrompt(unit)
 							error(dmgResult, 0)
 						end
 						predicted = dmgResult.finalDamage or 0
+						-- BUG-110: a physical hit on a Bleeding target also deals the Bleed bonus
+						-- (same helper as the real hit, CombatResolver.ApplyOutcome).
+						-- W2: only when the hit reduces HP after shields.
+						if dmgResult.type == "Damage" and predicted > 0 then
+							predicted = predicted + CombatResolver.PredictBleedBonus(c, unit, dmgResult.element, predicted, 1)
+						end
 					end
 					local tEntry = {
 						id        = c.id,
@@ -356,7 +420,9 @@ local function buildTurnPrompt(unit)
 					-- (shared with the actual commit logic) so the client can highlight
 					-- the caster's landing (yellow) and the path (white) at confirmation.
 					if def.isCharge or def.leapsAdjacent then
-						local landing = CommandService.ComputeChargeLanding(unit, c, state)
+						-- BUG-120: a leap shows the same landing its resolution uses (LeapLanding).
+						local landing = if def.leapsAdjacent then CommandService.LeapLanding(unit, c, state)
+							else CommandService.ComputeChargeLanding(unit, c, state)
 						if landing then
 							tEntry.landingTileX = landing.x
 							tEntry.landingTileY = landing.y
@@ -377,10 +443,22 @@ local function buildTurnPrompt(unit)
 			end
 
 			-- Skill hit preview (2026-10-30): remember what this prompt offered for the preview check.
+			-- BUG-118 (BUG-HUNT-14): a unit-target skill that is not widened previews only on a tile
+			-- holding one of the units this prompt offered (the commit refuses a bare tile for it).
+			local _unitOnly = (not isGroundTarget) and (not isSelfTarget)
+				and (not TargetingService.IsWidenedSkill(def)) and TargetingService.IsUnitOnlyTargetRule(tr)
+			local _targetTiles = nil
+			if _unitOnly then
+				_targetTiles = {}
+				for _, t in ipairs(targetIds) do
+					if t.tileX and t.tileY then _targetTiles[t.tileX .. "," .. t.tileY] = true end
+				end
+			end
 			_promptSkillInfo[def.id] = {
 				range = computedRange or (def.range or 1),
 				minRange = computedMinRange or 0,
 				selfTarget = isSelfTarget,
+				targetTiles = _targetTiles,
 			}
 			table.insert(skills, {
 				id          = def.id,
@@ -388,7 +466,8 @@ local function buildTurnPrompt(unit)
 				willEndTurn = (def.channelTime or 0) > 0, -- warn player: channeling ends turn
 				mpCost      = promptMpCost,
 				range       = def.range or 1,
-				pattern     = def.pattern or "Single",
+				-- BUG-157 (HUNT-20): the skill's real shape, via the shared weapon/skill label table.
+				pattern     = WeaponData.GetSkillPatternLabel(def.aoePattern or def.pattern, unit.weaponPattern),
 				targetRules = def.targetRules or "Enemy Unit",
 				isHealing   = def.isHealing or false,
 				isCharge    = def.isCharge or false,
@@ -553,6 +632,10 @@ local function buildTurnPrompt(unit)
 				-- teleport pick a tile even though their authored range is 0.
 				local aimRange = ItemEffectService.GetItemAimRange(unit, consDef)
 				if aimRange then itemRange = math.max(itemRange, aimRange) end
+				-- BUG-128 (BUG-HUNT-20, 2026-11-22): a self-centred area item with no aim tile (Rally Array,
+				-- consumable_items Range 0 / Self-origin) is always centred on the user (CommandService snaps
+				-- the tile back). Item-range bonuses made the prompt offer range 2 tiles; offer the user's own tile.
+				if tr == "Self-origin" and not aimRange then itemRange = 0 end
 
 				-- Classify targeting mode from targetRules
 				-- Battlefield / Global items (weather beacons) need no target: confirm like Self.
@@ -870,7 +953,9 @@ local function buildTurnPrompt(unit)
 			and RaceData.GetRace(unit.raceId).name or nil,
 		doctrine = unit.doctrineId and DoctrineData[unit.doctrineId]
 			and DoctrineData[unit.doctrineId].name or "",
-		maxAp    = 2,
+		-- BUG-137 (Tester UAT batch 9b, carried note): the ONE AP rule (GameConstants.GetTurnAp: Boss 3,
+		-- else 2, + RL-19 _dgApBonus), so the prompt's max AP matches the AP the unit really got (DAT-001).
+		maxAp    = GameConstants.GetTurnAp(unit),
 	}
 end
 
@@ -895,6 +980,9 @@ end)
 local function waitForPlayerCommand(unit, playerObj)
 	-- Send prompt to client
 	local prompt = buildTurnPrompt(unit)
+	-- BUG-154: the reason code of this unit's last refused command (nil when none), shown once by the
+	-- client (GameConstants.REJECT_TEXT). One short string on the prompt this player already gets (NET-003).
+	prompt.rej = CommandService.TakeRejectCode(unit.id)
 	_previewUnit = unit  -- skill hit preview answers for this unit only (2026-10-30)
 	print(string.format(
 		"[Main] Sending PlayerTurnPrompt to %s for %s (AP:%d, Skills:%d, Moves:%d)",
@@ -925,6 +1013,22 @@ local function waitForPlayerCommand(unit, playerObj)
 	return cmd
 end
 
+-- BUG-269 (batch 22, Studio pass 13): a board change made while a player's turn prompt is open (dev DevMoveUnit)
+-- left that prompt's move tiles and paths as they were when it was built, so it offered a path through the tile a
+-- unit had just been moved onto (the server check, which reads live positions, then refused it). This sends the
+-- same prompt again, rebuilt from the live board, exactly as after a refused command. No-op when no prompt is open.
+function BattleTurnController.RefreshPlayerPrompt(): boolean
+	local unit = _previewUnit
+	if not (state and unit and unit.isAlive and unit.side == "Player") then return false end
+	local playerObj = Players:GetPlayers()[1]
+	if not playerObj then return false end
+	local prompt = buildTurnPrompt(unit)
+	print(string.format("[Main] Re-sending PlayerTurnPrompt to %s for %s (board changed, Moves:%d)",
+		playerObj.Name, unit.name, #prompt.moveCandidates))
+	BattleEvents.PlayerTurnPrompt:FireClient(playerObj, prompt)
+	return true
+end
+
 -- SKILL HIT PREVIEW (2026-10-30): read-only "who does this hit, and for how much" for the tile the
 -- player is aiming a skill at. Answers only for the unit awaiting a command, one of its own skills,
 -- and a tile inside the range the prompt offered (SEC-001: type, range and ownership checked; light
@@ -946,6 +1050,10 @@ BattleEvents.PreviewSkillHits.OnServerInvoke = function(plr: any, skillId: any, 
 	if info.selfTarget then
 		if dist ~= 0 then return { ok = false } end
 	elseif dist > info.range or dist < info.minRange then
+		return { ok = false }
+	end
+	-- BUG-118 (BUG-HUNT-14): unit-target skill aimed at a tile with no offered target -> no preview.
+	if info.targetTiles and not info.targetTiles[tileX .. "," .. tileY] then
 		return { ok = false }
 	end
 	local now = os.clock()
@@ -1214,6 +1322,7 @@ local function executePlayerCommand(unit, command)
 			local ox, oy = tonumber(sx), tonumber(sy)
 			if not (ox and oy) then warn("[Main] Object push: bad target id"); return nil end
 			local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "PushObject", { objX = ox, objY = oy })
+			if ok and CommandService.WasActionVoided(unit) then return nil end  -- BUG-132: lethal Wounded, no push
 			if ok then
 				return { actionType = "Push", unit = unit, objectPush = true }
 			else
@@ -1238,6 +1347,7 @@ local function executePlayerCommand(unit, command)
 			pushSelection.pushDir = { dx = command.pushDirX, dy = command.pushDirY }
 		end
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Push", pushSelection)
+		if ok and CommandService.WasActionVoided(unit) then return nil end  -- BUG-132: lethal Wounded, no push
 		if ok then
 			return { actionType = "Push", unit = unit, target = target,
 				oldTargetX = oldTargetX, oldTargetY = oldTargetY }
@@ -1268,6 +1378,7 @@ local function executePlayerCommand(unit, command)
 		end
 		local oldSide = tgt and tgt.side or nil
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Interact", selection)
+		if ok and CommandService.WasActionVoided(unit) then return nil end  -- BUG-132: lethal Wounded, no interact
 		if ok then
 			return {
 				actionType   = "Interact",
@@ -1302,6 +1413,7 @@ local function executePlayerCommand(unit, command)
 			local ox, oy = tonumber(sx), tonumber(sy)
 			if not (ox and oy) then warn("[Main] Object attack: bad target id"); return nil end
 			local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "AttackObject", { objX = ox, objY = oy })
+			if ok and CommandService.WasActionVoided(unit) then return nil end  -- BUG-132: lethal Wounded, no attack
 			if ok then
 				return { actionType = "Attack", unit = unit, objectAttack = true }
 			else
@@ -1325,21 +1437,37 @@ local function executePlayerCommand(unit, command)
 
 		local hpBefore = target.currentHp
 		local rtBefore = target.remainingRt
-		local statusesBefore = #target.statusInstances
+		local _stBefore = takeStatusSnapshot(target)  -- BUG-185: what the attack really applies
+		local _revivesBefore = target._reviveCount or 0  -- BUG-143: KO + revive inside this attack
+		local _aliveBefore = target.isAlive == true
+		clearStatCapLoss()  -- BUG-219
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Attack", target)
+		if ok and CommandService.WasActionVoided(unit) then return nil end  -- BUG-126: lethal Wounded, no attack
 		if ok then
-			local newStatus = nil
-			if #target.statusInstances > statusesBefore then
-				newStatus = target.statusInstances[#target.statusInstances].id
-			end
+			-- BUG-185 (batch 15): only a status this attack really applied (shared rule). "+Sleep" was shown on a
+			-- unit the log had just called immune to Sleep (count of instances, last one).
+			local newStatus = newlyAppliedStatus(target, _stBefore, nil, unit.id)
 			local rtAdded = target.remainingRt - rtBefore
+			-- BUG-143 (BUG-HUNT-15): knocked out and revived in the same commit (Rescue Beacon) = the hit took
+			-- all of hpBefore and the KO is logged, then the revive line; it is not a negative-damage hit.
+			local _revivedHere = _aliveBefore and (target._reviveCount or 0) ~= _revivesBefore
+			-- BUG-219 (Tester W1): HP lost to a Max HP cap (a stat status this attack applied) is not hit damage.
+			local _atkDmg = hpBefore - target.currentHp
+			if (target._statCapLoss or 0) > 0 then _atkDmg = math.max(0, _atkDmg - target._statCapLoss) end
+			local _atkTrap = forcedTrapLoss(target)  -- BUG-253: a trap the knockback dragged it over is not hit damage
+			if _atkTrap > 0 then _atkDmg = math.max(0, _atkDmg - _atkTrap) end
+			clearStatCapLoss()
 			return {
 				actionType    = "Attack",
 				unit          = unit,
 				target        = target,
-				damage        = hpBefore - target.currentHp,
+				damage        = if _revivedHere then hpBefore else _atkDmg,
 				statusApplied = newStatus,
 				rtDelay       = rtAdded > 0 and rtAdded or nil,
+				targetHpAfter = if _revivedHere then 0 elseif _atkTrap > 0 then (target.currentHp or 0) + _atkTrap else nil,  -- BUG-253: HP right after the hit
+				targetKoHere  = if _revivedHere then true else nil,
+				revivedHere   = if _revivedHere then true else nil,
+				koFloorCause  = target._koFloorCause or false,  -- BUG-284: this hit's KO floor ("kept at 1 HP by ...")
 			}
 		else
 			-- BUG-085: no [Main] warn here; CommandService.ValidateAndCommit already logs
@@ -1404,10 +1532,14 @@ local function executePlayerCommand(unit, command)
 		local rtSnapshot = {}
 		local statusSnapshot = {}
 		local burnSnapshot = {}
+		local reviveSnapshot = {}  -- BUG-143: revive counter, alive units only (KO + revive in this cast)
 		for _, u in ipairs(state.units) do
 			hpSnapshot[u.id] = u.currentHp
 			rtSnapshot[u.id] = u.remainingRt
-			statusSnapshot[u.id] = #u.statusInstances
+			statusSnapshot[u.id] = takeStatusSnapshot(u)  -- BUG-185: instances + stamps, not a count
+			if u.isAlive then
+				reviveSnapshot[u.id] = u._reviveCount or 0
+			end
 			-- Snapshot burn stored value for accumulation detection
 			local burnInst = StatusService.HasStatus(u, "Burn")
 			burnSnapshot[u.id] = burnInst and burnInst.storedBurn or 0
@@ -1425,26 +1557,35 @@ local function executePlayerCommand(unit, command)
 		end
 		local selection = { target = target, skillId = command.skillId, stealSlot = stealSlot }
 
-		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Skill", selection)
+		-- BUG-139 (BUG-HUNT-08): record which units this skill really hit (CombatResolver.ApplyOutcome),
+		-- so side effects of the cast (a set-off Land Mine / explosion chain / Collapse) are not listed
+		-- as hits of the skill below.
+		clearStatCapLoss()  -- BUG-219
+		CombatResolver.BeginHitCapture()
+		-- BUG-146 (Tester batch 10 A2): the commit runs in pcall so the hit capture is ALWAYS closed, even when
+		-- the commit throws (an open capture would keep recording every later ApplyOutcome). The error is then
+		-- raised again unchanged (level 0 = original message), so callers see the same failure as before.
+		local _commitOk, ok, reason = pcall(CommandService.ValidateAndCommit, state, unit.id, "Skill", selection)
+		local _skillHitIds = CombatResolver.EndHitCapture()
+		if not _commitOk then
+			BattleVisualBroadcaster.HoldPushes(false)  -- BUG-152 (A5): never leave pushes held on a re-raise
+			error(ok, 0)
+		end
+		if ok and CommandService.WasActionVoided(unit) then return nil end  -- BUG-126: lethal Wounded, no cast
 		if ok then
 			-- Detect ALL units that were affected (for AOE skills)
 			local results = {}
 			for _, u in ipairs(state.units) do
 				local prevHp = hpSnapshot[u.id] or u.currentHp
 				local hpDiff = prevHp - u.currentHp
-				local prevStatuses = statusSnapshot[u.id] or 0
-				local newStatus = nil
-				if #u.statusInstances > prevStatuses then
-					newStatus = u.statusInstances[#u.statusInstances].id
-				else
-					-- Detect refreshed/accumulated statuses (instance count didn't change)
-					if skillDef.appliesStatus and hpDiff > 0 then
-						local inst = StatusService.HasStatus(u, skillDef.appliesStatus)
-						if inst then
-							newStatus = skillDef.appliesStatus
-						end
-					end
-				end
+				-- BUG-219 (Tester W1): HP lost to a Max HP cap (a stat status of this cast) is not hit damage.
+				if hpDiff > 0 and (u._statCapLoss or 0) > 0 then hpDiff = math.max(0, hpDiff - u._statCapLoss) end
+				local _skTrap = forcedTrapLoss(u)  -- BUG-253: a trap this cast's push dragged it over is not skill damage
+				if hpDiff > 0 and _skTrap > 0 then hpDiff = math.max(0, hpDiff - _skTrap) end
+				-- BUG-185 (batch 15): only a status this cast really applied (new, or refreshed / stacked /
+				-- accumulated), preferring the skill's own status. The old fallback named appliesStatus whenever
+				-- the unit had it, even when this cast's application was refused (immune).
+				local newStatus = newlyAppliedStatus(u, statusSnapshot[u.id], skillDef.appliesStatus, unit.id)
 				-- 2026-11-09: the caster's OWN HP change on a skill aimed at someone else (Blood Price / HP
 				-- Casting cost, Lifesteal / Vitality Surge heal) is not a hit on the caster. When clients were
 				-- already sent that change under its own cause, don't list the caster as a target too (it
@@ -1458,21 +1599,37 @@ local function executePlayerCommand(unit, command)
 				end
 				local _casterSelfChangeShown = u == unit and u ~= target and not newStatus
 					and BattleVisualBroadcaster.IsHpShown(u)
-				if (hpDiff ~= 0 or newStatus) and not _casterSelfChangeShown then
+				-- BUG-139 (BUG-HUNT-08): a unit the skill never hit (not the aimed unit, not the caster, not in
+				-- the hit capture) whose whole HP change already went out under its own cause (explosion,
+				-- Collapse, trap) is a side effect, not a skill hit. It was logged as "Mage uses Fire Bolt on
+				-- Sentry Turret: -2 HP, target RT +100" (the RT was the Collapse +50 rule, not Fire Bolt).
+				-- Status-only changes (hpDiff 0: area shields / buffs) are unchanged.
+				local _sideEffectShown = hpDiff ~= 0 and u ~= target and u ~= unit and not _skillHitIds[u.id]
+					and BattleVisualBroadcaster.IsHpShown(u)
+				if (hpDiff ~= 0 or newStatus) and not _casterSelfChangeShown and not _sideEffectShown then
 					local rtAdded = u.remainingRt - (rtSnapshot[u.id] or 0)
+					-- BUG-143 (BUG-HUNT-15): KO'd and revived inside this cast = a KO hit for all its old HP,
+					-- then the revive line (held for it); not a heal.
+					local _revivedHere = reviveSnapshot[u.id] ~= nil and (u._reviveCount or 0) ~= reviveSnapshot[u.id]
+					local _hitHp = if _revivedHere then (hpSnapshot[u.id] or 0) else hpDiff
 					table.insert(results, {
 						actionType    = "Skill",
 						unit          = unit,
 						target        = u,
 						skillName     = skillDef.name,
-						damage        = math.max(0, hpDiff),
-						healing       = math.max(0, -hpDiff),
+						damage        = math.max(0, _hitHp),
+						healing       = math.max(0, -_hitHp),
 						statusApplied = newStatus,
 						isChanneling  = unit.isChanneling,
 						rtDelay       = rtAdded > 0 and rtAdded or nil,
+						targetHpAfter = if _revivedHere then 0 elseif _skTrap > 0 then (u.currentHp or 0) + _skTrap else nil,  -- BUG-253
+						targetKoHere  = if _revivedHere then true else nil,
+						revivedHere   = if _revivedHere then true else nil,
+						koFloorCause  = u._koFloorCause or false,  -- BUG-284: this unit's KO floor in this cast
 					})
 				end
 			end
+			clearStatCapLoss()  -- BUG-219
 
 			-- Caster animation (2026-10-28, W-6): pick ONE kind for the whole cast and attach it
 			-- to the FIRST result only; every other target's event carries "None". The server
@@ -1557,7 +1714,7 @@ local function executePlayerCommand(unit, command)
 		-- Snapshot target state for result reporting
 		local hpBefore = target.currentHp or 0
 		local mpBefore = target.currentMp or 0
-		local statusesBefore = target.statusInstances and #target.statusInstances or 0
+		local _itemStBefore = takeStatusSnapshot(target)  -- BUG-185: what the item really applies
 
 		-- choice: picked value for pick-list items (string only; validated server-side).
 		local selection = { itemSlotIndex = slotIndex, target = target,
@@ -1581,7 +1738,9 @@ local function executePlayerCommand(unit, command)
 				table.insert(_devicesBefore, { u = du, x = du.tileX, y = du.tileY })
 			end
 		end
+		clearStatCapLoss()  -- BUG-229
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Item", selection)
+		if ok and CommandService.WasActionVoided(unit) then return nil end  -- BUG-132: lethal Wounded, no item
 		if ok then
 			-- D-1 fix (UAT 2026-10-26): two passes. Clear every vacated tile FIRST, then
 			-- label every new tile, so a swap (each unit lands on the other's old tile)
@@ -1613,11 +1772,13 @@ local function executePlayerCommand(unit, command)
 				end
 			end
 			local hpDelta = (target.currentHp or 0) - hpBefore
+			-- BUG-229 (batch 18c, Tester A1 on BUG-219): HP lost to a Max HP cap (a stat status this item applied) is not
+			-- item damage; StatusService logs it on its own "Max HP drops" line. Same rule as Attack / Skill / AI.
+			if hpDelta < 0 and (target._statCapLoss or 0) > 0 then hpDelta = math.min(0, hpDelta + target._statCapLoss) end
+			if hpDelta < 0 and forcedTrapLoss(target) > 0 then hpDelta = math.min(0, hpDelta + forcedTrapLoss(target)) end  -- BUG-253
+			clearStatCapLoss()
 			local mpDelta = (target.currentMp or 0) - mpBefore
-			local newStatus = nil
-			if target.statusInstances and #target.statusInstances > statusesBefore then
-				newStatus = target.statusInstances[#target.statusInstances].id
-			end
+			local newStatus = newlyAppliedStatus(target, _itemStBefore, nil, unit.id)  -- BUG-185: shared rule
 			local amount = 0
 			if hpDelta ~= 0 then
 				amount = math.abs(hpDelta)
@@ -1691,7 +1852,9 @@ local function broadcastActions(actions, activeUnit)
 						targetHpAfter = action.targetHpAfter,
 						koHere        = if action.targetKoHere == false and not _koHit[target] and _lastFor[target] == _actIdx
 							then nil else action.targetKoHere,
+						revivedHere   = action.revivedHere,  -- BUG-143: KO + revive in the same command
 						pushTag       = action.pushTag,  -- Job 1: send this action's held push right after the hit
+						koFloorCause  = action.koFloorCause,  -- BUG-284: per-hit KO floor (nil = read the live unit)
 					}
 					BattleVisualBroadcaster.UnitActed(
 						action.unit, target, outcome, action.skillName, action.skillId, _animKind
@@ -1766,6 +1929,28 @@ local function broadcastActions(actions, activeUnit)
 	-- Rulings R7 (handoff 1, 2026-11-09): a push / collision KO that no hit line of this batch claimed
 	-- gets its one KO line now, after the batch's hit lines.
 	if BattleVisualBroadcaster.FlushPendingKo then BattleVisualBroadcaster.FlushPendingKo() end
+	-- BUG-299 (batch 29): the AI's end-of-turn "X waits." line (kept by runAiTurn) goes after the turn's hit,
+	-- push, KO and revive lines above.
+	if type(actions.waitLines) == "table" then
+		for _, l in ipairs(actions.waitLines) do BattleVisualBroadcaster.Log(l.category, l.text, l.unitId) end
+		actions.waitLines = nil
+	end
+
+	-- BUG-156 (core_stats 45/46): a boss that crossed a phase threshold in this batch breaks now (RT 0,
+	-- debuffs halved); the timeline below already shows it. Log text approved (loadout_ui_spec 132).
+	for _, u in ipairs(state.units) do
+		if u.isAlive and GameConstants.IsBoss(u) then
+			-- BUG-168 (batch 13): the debuffs the break removed get their "is no longer <status>." line right
+			-- after the break line, through the existing expiry line (StatusWoreOff). It logged nothing.
+			local _pbCrossed, _pbRemoved = StatusService.CheckBossPhaseBreak(u)
+			if _pbCrossed > 0 then
+				BattleVisualBroadcaster.Log("info", `{u.name}: Phase Break!`, u.id)
+				for _, sid in ipairs(_pbRemoved or {}) do BattleVisualBroadcaster.StatusWoreOff(u, sid) end
+				-- Client status pills follow at once (status-only sync, no HP diff line).
+				if _pbRemoved and #_pbRemoved > 0 then BattleVisualBroadcaster.StatusSync(u) end
+			end
+		end
+	end
 
 	-- After each broadcast batch, send updated timeline so client sees
 	-- real-time turn order changes (especially during AI turns)
@@ -1886,11 +2071,73 @@ local function _findLowestAlly(unit, allUnits)
 	return lowest, lowestPct
 end
 
+-- DEV (batch 19, Studio only): one forced AI action set by the DevForceAiAction dev command
+-- (Main.server.lua DevCommand handler, which validated the skill and target). Kept until it commits,
+-- can't be built, or is cleared (BUG-275; comment reworded BUG-277).
+-- Returns an action in the AIService.DecideAction shape, or nil (target gone / not Studio), in which
+-- case the AI decides normally. No game rule changes: the action still goes through ValidateAndCommit.
+local _lastAiRejectReason = nil -- why the last AI commit was rejected (dev print for a forced action)
+-- BUG-275 (batch 23, Studio pass 14): the order is no longer cleared just because it was TRIED. It stays on the unit
+-- until it really commits (runAiTurn clears it), is cleared by the dev command, or can't be built (dropped below with a
+-- warning). A rejected try (e.g. out of range before the unit moves) is retried after the AI's next action and on the
+-- unit's next turn, and every turn that ends with it still pending prints why.
+local function takeDevForcedAction(unit)
+	local f = unit._devForcedAction
+	if type(f) ~= "table" or not game:GetService("RunService"):IsStudio() then unit._devForcedAction = nil; return nil end
+	local target = nil
+	if type(f.targetId) == "string" then
+		-- BUG-293 (batch 27): f.koTarget (set by Main DevForceAiAction for a revive skill) = the target is a KO'd unit.
+		local _wantKo = f.koTarget == true
+		for _, u in ipairs(state.units) do
+			if u.id == f.targetId and (if _wantKo then u.isAlive == false else u.isAlive) then target = u; break end
+		end
+	elseif type(f.tileX) == "number" and type(f.tileY) == "number" then
+		for _, u in ipairs(state.units) do
+			if u.isAlive and u.tileX == f.tileX and u.tileY == f.tileY then target = u; break end
+		end
+		if not target and f.skillId ~= "Attack" then
+			-- Same ground marker the player skill path builds for an empty tile.
+			target = {
+				tileX = f.tileX, tileY = f.tileY, isGroundTarget = true, isAlive = true,
+				name = string.format("Ground(%d,%d)", f.tileX, f.tileY),
+				id = "_ground_" .. f.tileX .. "_" .. f.tileY,
+			}
+		end
+	end
+	if not target then
+		unit._devForcedAction = nil
+		warn(string.format("[BattleTurnController] DEV forced action for %s dropped: target not found; AI decides normally", tostring(unit.name)))
+		return nil
+	end
+	if f.skillId == "Attack" then
+		if target.isGroundTarget then
+			unit._devForcedAction = nil
+			warn(string.format("[BattleTurnController] DEV forced action for %s dropped: Attack needs a unit on the tile", tostring(unit.name)))
+			return nil
+		end
+		print(string.format("[BattleTurnController] DEV forced action: %s basic-attacks %s", tostring(unit.name), tostring(target.name)))
+		return { actionType = "Attack", selection = target, skillName = nil, score = 0, rtEstimate = 0,
+			tile = nil, targetName = target.name, devForced = true }
+	end
+	local def = CommandService.GetSkill(f.skillId)
+	if not def then
+		unit._devForcedAction = nil
+		warn(string.format("[BattleTurnController] DEV forced action for %s dropped: unknown skill %s", tostring(unit.name), tostring(f.skillId)))
+		return nil
+	end
+	print(string.format("[BattleTurnController] DEV forced action: %s uses %s (%s) on %s", tostring(unit.name),
+		tostring(def.name), tostring(def.id or f.skillId), tostring(target.name)))
+	return { actionType = "Skill", selection = { target = target, skillId = def.id or f.skillId },
+		skillName = def.name, score = 0, rtEstimate = 0, tile = nil, targetName = target.name, devForced = true }
+end
+
 local function runAiTurn(unit)
 	local allUnits = state.units
 	local actions  = {}
 
 	local function tryCommit(actionType, selection, skillName)
+		-- BUG-239 (batch 19b, Tester A1): forget the last rejection first, so an early exit below never shows a stale reason.
+		_lastAiRejectReason = nil
 		if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then
 			return false
 		end
@@ -1914,25 +2161,55 @@ local function runAiTurn(unit)
 		-- Item 10 (2026-11-08 11:52 PM): AI hit lines are broadcast at the END of the AI turn, so every line used
 		-- to show the end-of-turn HP and a KO. Record this hit's own result for the battle log instead.
 		local aliveBefore = targetUnit ~= nil and targetUnit.isAlive == true
-		local statusesBefore = (targetUnit and targetUnit.statusInstances) and #targetUnit.statusInstances or 0
+		local revivesBefore = targetUnit and (targetUnit._reviveCount or 0) or 0  -- BUG-143
+		local _aiStBefore = takeStatusSnapshot(targetUnit)  -- BUG-185: what this commit really applies
+		-- BUG-205 (Tester batch 16 F1 on BUG-199): a Skill can also buff OTHER units (instant War Cry aura, Shared Resolve such
+		-- as Hold the Line). Snapshot every unit's statuses and HP, so each ally that gains a status gets its own
+		-- 0-damage action below, the same as the player path (one action per affected unit).
+		local _allSt, _allHp = nil, nil
+		if actionType == "Skill" then
+			_allSt, _allHp = {}, {}
+			for _, u in ipairs(state.units) do
+				_allSt[u] = takeStatusSnapshot(u)
+				_allHp[u] = u.currentHp
+			end
+			-- BUG-213 (batch 17c, Tester W2): drop stale EntryStatus marks, so only this commit's marks are read below.
+			BattleVisualBroadcaster.TakeEntryMarks()
+		end
 
 		local oldTileX = unit.tileX
 		local oldTileY = unit.tileY
+		clearStatCapLoss()  -- BUG-219
 
 		-- Job 1 (2026-11-09): hold this hit's push / collision visuals until its hit is shown at the end of the
 		-- AI turn (broadcastActions); the tag ties them to this action.
 		BattleVisualBroadcaster.HoldPushes(actionType == "Attack" or actionType == "Skill")
-		local ok, _ = CommandService.ValidateAndCommit(
+		local ok, _rejectReason = CommandService.ValidateAndCommit(
 			state, unit.id, actionType, selection
 		)
+		_lastAiRejectReason = if ok then nil else _rejectReason -- DEV batch 19: shown for a rejected forced action
 		BattleVisualBroadcaster.HoldPushes(false)
 		local _pushTag = BattleVisualBroadcaster.TagHeldPushes()
+		-- BUG-213: statuses this commit already logged via EntryStatus (tile / terrain entry), per unit id.
+		local _entryMarks = if _allSt then BattleVisualBroadcaster.TakeEntryMarks() else nil
 
-		if ok and actionType ~= "Wait" then
+		-- BUG-126 (BUG-HUNT-21): a lethal Wounded tick at commit cancels the action; it is not logged
+		-- as a hit (the KO line already says why).
+		if ok and actionType ~= "Wait" and not CommandService.WasActionVoided(unit) then
 			local damage = 0
 			local healing = 0
-			if targetUnit then
+			-- BUG-143 (BUG-HUNT-15): the hit KO'd the target and it was revived inside this commit (Rescue Beacon
+			-- at the KO check: "Crushblow Wardplate heals Keelover +39" was 19 -> KO -> 58). Log it as a KO hit for
+			-- all of hpBefore, then the revive line (held for this hit), not as a heal.
+			local revivedHere = aliveBefore and targetUnit ~= nil
+				and (targetUnit._reviveCount or 0) ~= revivesBefore
+			if revivedHere then
+				damage = hpBefore
+			elseif targetUnit then
 				local hpDiff = hpBefore - targetUnit.currentHp
+				-- BUG-219 (Tester W1): HP lost to a Max HP cap (a stat status of this commit) is not hit damage.
+				if hpDiff > 0 and (targetUnit._statCapLoss or 0) > 0 then hpDiff = math.max(0, hpDiff - targetUnit._statCapLoss) end
+				if hpDiff > 0 and forcedTrapLoss(targetUnit) > 0 then hpDiff = math.max(0, hpDiff - forcedTrapLoss(targetUnit)) end  -- BUG-253
 				if hpDiff > 0 then
 					damage = hpDiff
 				elseif hpDiff < 0 then
@@ -1940,18 +2217,14 @@ local function runAiTurn(unit)
 				end
 			end
 
+			-- BUG-185 (batch 15): only a status this commit really applied (shared rule), preferring the skill's
+			-- own status. An AI basic attack logged "+Sleep" on a Sleep-immune unit; a first Counter Stance logged
+			-- "+Recharge" (its Recharge Support rider) instead of "+CounterStance".
 			local newStatus = nil
-			if targetUnit and #targetUnit.statusInstances > statusesBefore then
-				newStatus = targetUnit.statusInstances[#targetUnit.statusInstances].id
-			else
-				-- Detect refreshed/accumulated statuses (e.g. Burn accumulation)
-				if targetUnit and actionType == "Skill" and selection and selection.skillId then
-					local def = CommandService.GetSkill(selection.skillId)
-					if def and def.appliesStatus and damage > 0 then
-						local inst = StatusService.HasStatus(targetUnit, def.appliesStatus)
-						if inst then newStatus = def.appliesStatus end
-					end
-				end
+			if targetUnit then
+				local _def = if actionType == "Skill" and selection and selection.skillId
+					then CommandService.GetSkill(selection.skillId) else nil
+				newStatus = newlyAppliedStatus(targetUnit, _aiStBefore, _def and _def.appliesStatus or nil, unit.id)
 			end
 
 			table.insert(actions, {
@@ -1965,8 +2238,14 @@ local function runAiTurn(unit)
 				damage         = damage,
 				healing        = healing,
 				statusApplied  = newStatus,
-				targetHpAfter  = targetUnit and targetUnit.currentHp or nil,  -- item 10: this hit's HP, not end-of-turn
-				targetKoHere   = if targetUnit then (aliveBefore and not targetUnit.isAlive) else nil,  -- item 10
+				-- item 10: this hit's HP, not end-of-turn; BUG-253: before a push trap. BUG-260 (batch 21b, Tester W2): only
+				-- Attack / Skill hold their pushes; any other AI action already logged push + trap lines, so no trap HP add-back.
+				targetHpAfter  = if revivedHere then 0 else (targetUnit and ((targetUnit.currentHp or 0) + (if actionType == "Attack" or actionType == "Skill" then forcedTrapLoss(targetUnit) else 0)) or nil),
+				targetKoHere   = if revivedHere then true elseif targetUnit then (aliveBefore and not targetUnit.isAlive) else nil,  -- item 10
+				revivedHere    = if revivedHere then true else nil,  -- BUG-143
+				-- BUG-284 (batch 26): this command's KO floor on the target. The AI turn is logged after ALL its commands,
+				-- so the live marker would only describe the last one (and each command now clears it).
+				koFloorCause   = if targetUnit then (targetUnit._koFloorCause or false) else nil,
 				pushTag        = _pushTag,  -- Job 1: its held push visuals
 				isChanneling   = unit.isChanneling,
 				animKind       = if actionType == "Skill" and selection and selection.skillId
@@ -1974,12 +2253,49 @@ local function runAiTurn(unit)
 					else nil,
 			})
 
+			-- BUG-205 (Tester batch 16 F1 on BUG-199): every other living unit this Skill gave a status (no HP change) gets
+			-- its own 0-damage action with the same push tag and no caster animation, so UnitActed logs "+X" and
+			-- the BUG-178 loop logs the status under this skill, after the cast line.
+			if _allSt then
+				local _def2 = if selection and selection.skillId then CommandService.GetSkill(selection.skillId) else nil
+				for _, u in ipairs(state.units) do
+					if u ~= targetUnit and u.isAlive and (if u.currentHp then u.currentHp + (u._statCapLoss or 0) else nil) == _allHp[u] then  -- BUG-219: a capped ally keeps its "+X"
+						local sid = newlyAppliedStatus(u, _allSt[u], _def2 and _def2.appliesStatus or nil, unit.id)
+						-- Same as the player path (B3): a Shield the caster gains from its own skill aimed at someone
+						-- else is an augment reward ShieldChanged already logged, not a hit on the caster.
+						if sid == "Shield" and u == unit then sid = nil end
+						-- BUG-213 (batch 17c, Tester W2): a status EntryStatus already logged for this commit ("is now Poison
+						-- (Poison Cloud tile).", the caster's own tile entered on a charge / leap / knock) gets no second "+X".
+						if sid and _entryMarks and u.id ~= nil and _entryMarks[u.id] and _entryMarks[u.id][sid] then sid = nil end
+						if sid then
+							table.insert(actions, {
+								actionType    = "Skill",
+								unit          = unit,
+								target        = u,
+								skillName     = skillName,
+								skillId       = (selection and selection.skillId) or nil,
+								damage        = 0,
+								healing       = 0,
+								statusApplied = sid,
+								pushTag       = _pushTag,
+								animKind      = "None",
+							})
+						end
+					end
+				end
+			end
+
 			if newStatus and targetUnit then
 				checkChannelInterrupt(targetUnit, newStatus)
 			end
 		end
 
-		return ok
+		clearStatCapLoss()  -- BUG-219: hit lines of this commit are built
+
+		-- BUG-193 (batch 15b, BUG-143 W1): also return this commit's push tag, so a revive held by the mid-turn
+		-- battle-end check is tied to THIS commit, even when it added no entry to actions (Move, Item, Guard,
+		-- AttackObject, voided). Then no earlier action's hit line claims it; it goes out with the batch flush.
+		return ok, _pushTag
 	end
 
 	-- Per-AP decision loop (one smart brain + personality scoring).
@@ -1988,6 +2304,8 @@ local function runAiTurn(unit)
 	-- bolt-on consumable block (item use is now a scored option inside the brain).
 	local MAX_AI_ACTIONS = 8  -- safety cap against any pathological loop
 	local actionsThisTurn = 0
+	local _devTryBlocked = false  -- BUG-275: the forced action was rejected; wait for another committed action before retrying
+	local _devLastWhy = nil       -- BUG-275: why the forced action was not used this turn (printed at turn end)
 	while BattleCoordinator.GetPhase(state) == "TurnOpen"
 		and ((unit.currentAp or 0) > 0 or CommandService.IsQuickDrawReady(unit))
 		and actionsThisTurn < MAX_AI_ACTIONS do
@@ -1996,7 +2314,13 @@ local function runAiTurn(unit)
 		-- across map / seek treasure / hunt monster / stay passive), NOT the enemy
 		-- AI brain which has no neutral concept.
 		local action
-		if unit.side == "Neutral" then
+		-- DEV (batch 19, Studio only): a forced action from DevForceAiAction is tried first. It is kept until
+		-- it commits, can't be built, or is cleared (BUG-275; comment reworded BUG-277); if it can't be built
+		-- the AI decides normally below.
+		local _devAction = if unit._devForcedAction ~= nil and (unit.currentAp or 0) > 0 and not _devTryBlocked then takeDevForcedAction(unit) else nil
+		if _devAction then
+			action = _devAction
+		elseif unit.side == "Neutral" then
 			action = BattlefieldEventService.NeutralAction(unit, state)
 		elseif (unit.currentAp or 0) <= 0 then
 			-- Quick Draw bonus attack on offer: take the best basic attack, or stop.
@@ -2009,39 +2333,68 @@ local function runAiTurn(unit)
 		end
 
 		local committed = false
+		local _commitTag = nil  -- BUG-193: this commit's push tag (tryCommit's 2nd return)
 		local a = action.actionType
 		if a == "Attack" then
-			committed = tryCommit("Attack", action.selection, nil)
+			committed, _commitTag = tryCommit("Attack", action.selection, nil)
 		elseif a == "Skill" then
-			committed = tryCommit("Skill", action.selection, action.skillName)
+			committed, _commitTag = tryCommit("Skill", action.selection, action.skillName)
 		elseif a == "Move" then
-			committed = tryCommit("Move", action.selection, nil)
+			committed, _commitTag = tryCommit("Move", action.selection, nil)
 		elseif a == "Guard" then
-			committed = tryCommit("Guard", nil, nil)
+			committed, _commitTag = tryCommit("Guard", nil, nil)
 		elseif a == "Item" then
-			committed = tryCommit("Item", action.selection, nil)
+			committed, _commitTag = tryCommit("Item", action.selection, nil)
 		elseif a == "AttackObject" then
 			-- OBS Phase 2c-I: boxed AI chose to break a blocker-prop OBS object to open
 			-- a route. selection = { objX, objY }; ValidateAndCommit routes it through
 			-- the same AttackObject path the player's object-attack uses.
-			committed = tryCommit("AttackObject", action.selection, nil)
+			committed, _commitTag = tryCommit("AttackObject", action.selection, nil)
 		else
 			-- Unknown action type: stop rather than spin.
 			break
 		end
 
 		actionsThisTurn = actionsThisTurn + 1
+		-- BUG-275: a committed forced action is used up (cleared before the battle-end check below can leave the loop).
+		if committed and action.devForced then
+			unit._devForcedAction = nil
+			print(string.format("[BattleTurnController] DEV forced action for %s committed (used up)", tostring(unit.name)))
+		end
 
 		-- B1 (Studio 2026-11-09): same rule as the player loop -- a side wiped by this action ends the
 		-- battle now; the AI does not keep acting on an empty field. Its hits are shown by Main afterwards.
-		if committed and BattleCoordinator.IsSideWiped(state) and BattleCoordinator.CheckBattleEnd(state) then
-			print(`[BattleTurnController] Battle decided during {unit.name}'s turn - ending it now`)
-			break
+		-- BUG-143 recurrence (batch 15): this check runs the Rescue Beacon hook, which can revive the unit this
+		-- action just knocked out. AI hit lines are only sent at the end of the turn, so the revive line is held
+		-- (HoldPushes) and stamped with this action's tag: UnitActed then sends "<unit> is knocked out." and the
+		-- revive line right after the hit. Before, the KO line was missing (the unit was alive again when its hit
+		-- line went out) and the revive line was not tied to the hit.
+		if committed and BattleCoordinator.IsSideWiped(state) then
+			BattleVisualBroadcaster.HoldPushes(true)
+			local _endOk, _ended = pcall(BattleCoordinator.CheckBattleEnd, state)
+			BattleVisualBroadcaster.HoldPushes(false)
+			-- BUG-193 (batch 15b): tag with THIS commit's tag, not actions[#actions] (an earlier action's entry
+			-- when this commit added none, so the revive went out in that action's place, before the KO hit).
+			BattleVisualBroadcaster.TagHeldRevives(_commitTag)
+			if not _endOk then error(_ended, 0) end
+			if _ended then
+				print(`[BattleTurnController] Battle decided during {unit.name}'s turn - ending it now`)
+				break
+			end
 		end
 
 		-- If a commit failed (state changed / illegal now), stop and end turn
 		-- rather than retrying the same rejected action forever.
 		if not committed then
+			if action.devForced then
+				-- BUG-275: kept (not cleared); the AI takes this AP normally and the order is tried again after its next
+				-- committed action, or on the unit's next turn. Nothing was spent by the rejected try.
+				_devLastWhy = "rejected: " .. tostring(_lastAiRejectReason or "no reason given (phase changed or action voided)")
+				warn(string.format("[BattleTurnController] DEV forced action for %s was %s; kept, the AI acts normally and it is tried again later",
+					tostring(unit.name), _devLastWhy))
+				_devTryBlocked = true
+				continue
+			end
 			-- D-2 (2026-10-26): a not-built item was rejected with nothing spent; the AI now
 			-- skips that item, so let it pick another action with this AP (still capped).
 			if a == "Item" and unit._unbuiltItemRetry then
@@ -2050,6 +2403,15 @@ local function runAiTurn(unit)
 			end
 			break
 		end
+		-- BUG-275: any committed action re-opens a retry of a rejected forced action (the unit may now be in range).
+		_devTryBlocked = false
+	end
+
+	-- BUG-275: say why a forced action is still waiting when this turn ends (it stays for the unit's next turn).
+	if unit._devForcedAction ~= nil then
+		warn(string.format("[BattleTurnController] DEV forced action for %s not used this turn (%s); kept for its next turn",
+			tostring(unit.name), _devLastWhy or (if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then "turn already closed"
+				elseif (unit.currentAp or 0) <= 0 then "no AP left" else "AI action cap reached")))
 	end
 
 	-- AI facing: face toward nearest alive enemy at turn end
@@ -2076,7 +2438,20 @@ local function runAiTurn(unit)
 
 	-- Always end turn
 	if BattleCoordinator.GetPhase(state) == "TurnOpen" then
-		CommandService.ValidateAndCommit(state, unit.id, "Wait", nil)
+		-- BUG-299 (batch 29, Studio pass 20): the AI's hit / revive lines are only sent at the end of its turn
+		-- (broadcastActions), but this Wait logged "X waits." at once, so it came BEFORE them ("Hallow Arcflare
+		-- waits." then its Phoenix Rite revive line). Its log lines are kept here and broadcastActions sends them
+		-- after the turn's other lines. Always restored, even if the commit throws.
+		local _waitLines = {}
+		local _prevCollect = BattleVisualBroadcaster.CollectLines(_waitLines)
+		local _wOk, _wErr = pcall(CommandService.ValidateAndCommit, state, unit.id, "Wait", nil)
+		BattleVisualBroadcaster.EndCollectLines(_prevCollect)
+		if #_waitLines > 0 then actions.waitLines = _waitLines end
+		if not _wOk then
+			for _, l in ipairs(_waitLines) do BattleVisualBroadcaster.Log(l.category, l.text, l.unitId) end
+			actions.waitLines = nil
+			error(_wErr, 0)
+		end
 	end
 
 	return actions
@@ -2108,6 +2483,10 @@ local function handleChannelingActivation(activeUnit)
 		or "Unknown"
 
 	local channeledDef = activeUnit.channelingData and activeUnit.channelingData.skillDef
+	-- BUG-174 / BUG-185 (batch 15): every unit's statuses before the release, so a "+<status>" below is only
+	-- shown when this release really applied it (shared newlyAppliedStatus rule).
+	local _chStBefore = {}
+	for _, u in ipairs(state.units) do _chStBefore[u] = takeStatusSnapshot(u) end
 	-- Job 1 (2026-11-09): hold the release's push / collision visuals until its hits are shown.
 	BattleVisualBroadcaster.HoldPushes(true)
 	local success, result = CommandService.ActivateChanneledSkill(state, activeUnit)
@@ -2150,17 +2529,40 @@ local function handleChannelingActivation(activeUnit)
 			end
 		elseif result.type == "AOE" then
 			for _, entry in ipairs(result.targets or {}) do
+				-- BUG-141 (BUG-HUNT-26 / BUG-HUNT-13): log the HP the hit really removed (ApplyOutcome's
+				-- return: after shields, the 1-per-hit gadget counter, the KO floor), not the rolled
+				-- damage. Entries without `dealt` (buffs, swaps, links) keep the old value.
+				local _dealt = if entry.dealt ~= nil and entry.outcome and entry.outcome.type == "Damage"
+					then entry.dealt else entry.outcome.finalDamage
+				-- BUG-174 (batch 14): "+<status>" only when the unit really has it. outcome.appliesStatus is
+				-- what the skill tries to apply, so a unit just logged as immune (Petrified / Wardweave Robe)
+				-- read "uses Rainfall Zone on X: -0 HP, +Wet".
+				-- BUG-174 recurrence (batch 15): HasStatus alone was not enough - a Petrified unit that ALREADY had
+				-- Wet (from an earlier enemy Rainfall) was refused this Wet but still read "+Wet" and then "gains
+				-- Wet (4 turns)". Now the status must have been newly applied / refreshed by THIS release.
+				local _st = entry.outcome.appliesStatus
+				if _st and not (entry.target
+					and newlyAppliedStatus(entry.target, _chStBefore[entry.target], _st, activeUnit.id) == _st) then
+					_st = nil
+				end
 				table.insert(actions, {
 					actionType = "Skill", unit = activeUnit, target = entry.target,
-					skillName = result.skillName, damage = entry.outcome.finalDamage,
-					healing = 0, statusApplied = entry.outcome.appliesStatus,
+					skillName = result.skillName, damage = _dealt,
+					healing = 0, statusApplied = _st,
 				})
 			end
 		elseif result.type == "Damage" then
 			table.insert(actions, {
 				actionType = "Skill", unit = activeUnit, target = result.target,
 				skillName = result.skillName, damage = result.damage,
-				healing = 0, statusApplied = result.statusApplied,
+				-- BUG-185 (batch 15): same rule - only a status this release really applied.
+				healing = 0, statusApplied = if result.statusApplied and result.target
+					and newlyAppliedStatus(result.target, _chStBefore[result.target], result.statusApplied, activeUnit.id) == result.statusApplied
+					then result.statusApplied else nil,
+				-- BUG-169 (batch 13): HP right after the hit, before its knockback / wall hit (Overwhelming Blow
+				-- logged "-120 HP (45/316)", the HP after the later -11 wall hit). nil = live HP, as before.
+				targetHpAfter = result.targetHpAfter,
+				koFloorCause  = result.koFloorCause,  -- BUG-284: the release's KO floor ("kept at 1 HP by ...")
 			})
 		end
 	end

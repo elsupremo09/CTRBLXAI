@@ -54,7 +54,7 @@ local TargetingService = {}
 --     (self-radius) / ground / empty-tile / indiscriminate are LEFT AS-IS.
 --   * Heal/buff aimed at an enemy tile genuinely helps that enemy (resolution
 --     already applies to whatever target is passed); fizzles on empty ground.
---   * CARVE-OUTS: six unit-referent skills must STAY unit-targeted because they
+--   * CARVE-OUTS: seven unit-referent skills must STAY unit-targeted because they
 --     are meaningless on an empty tile (steal from nothing / swap with nothing /
 --     dash onto nothing / link to nothing). Enforced by skill id + the movement
 --     flags, so they can never be mistaken for a widenable peer sharing their
@@ -77,10 +77,13 @@ local WIDENABLE_TARGET_RULES = {
 -- Unit-referent carve-outs (stay unit-targeted). Steal/Mug strip a target's
 -- item; Phantom Exchange swaps position with a unit; Life Link binds to a unit;
 -- Skyfall Lance / Reckless Charge dash the caster onto the target's tile.
+-- BUG-134 (2026-11-22, Tester UAT batch 9 advisory): Fated Escape teleports a selected ALLY, so it is
+-- unit-referent too; movement_targeting 80 lists it in this same carve-out list.
 local TILE_TARGETING_CARVEOUTS = {
 	["SKL-STEAL"]            = true,
 	["DOC-THIEF-01"]         = true,  -- Mug
 	["SKL-PHANTOM-EXCHANGE"] = true,
+	["SKL-FATED-ESCAPE"]     = true,  -- movement_targeting 80 (BUG-134)
 	["SKL-LIFE-LINK"]        = true,
 	["SKL-SKYFALL-LANCE"]    = true,
 	["DOC-BERSERKER-01"]     = true,  -- Reckless Charge
@@ -88,7 +91,7 @@ local TILE_TARGETING_CARVEOUTS = {
 
 -- True when this skill/item should offer and accept any-tile targeting.
 -- nil-safe; false for anything outside the two in-scope allegiance buckets,
--- for the six carve-outs, and for any charge/movement/swap skill (belt-and-
+-- for the seven carve-outs, and for any charge/movement/swap skill (belt-and-
 -- suspenders so a future charge skill in an ally/enemy bucket can't leak in).
 function TargetingService.IsWidenedSkill(skillDef)
 	if type(skillDef) ~= "table" then return false end
@@ -99,6 +102,23 @@ function TargetingService.IsWidenedSkill(skillDef)
 	return true
 end
 
+-- BUG-118 (BUG-HUNT-14, 2026-11-22): target rules whose target is a UNIT. A skill with one of these
+-- rules accepts a bare tile (ground marker) only when it is a widened any-tile skill
+-- (IsWidenedSkill). target_validation_pipeline step 1 "Selection type: confirm unit / tile /
+-- object / ground / empty-tile type is permitted -> Invalid target type"; SEC-001 / SEC-002.
+local UNIT_ONLY_TARGET_RULES = {
+	["Enemy"]                       = true,
+	["Enemy Unit"]                  = true,
+	["Ally Unit"]                   = true,
+	["Ally Unit, Self"]             = true,
+	["Self, Ally Unit"]             = true,
+	["Ally Unit, Enemy Unit, Self"] = true,
+	["KO Unit"]                     = true,
+}
+function TargetingService.IsUnitOnlyTargetRule(targetRules: any): boolean
+	return UNIT_ONLY_TARGET_RULES[targetRules or "Enemy Unit"] == true
+end
+
 -- What an any-tile skill is FOR, read from its card tags. Used only to steer AI-driven
 -- units (enemy AI keeps side-based target choice, rulings 2026-10-24 / 2026-10-26):
 --   "harmful"    Direct Damage / Debuff, no Healing   -> hostile units
@@ -107,6 +127,13 @@ end
 --   "utility"    neither (e.g. Flash Freeze)           -> a tile (ground marker)
 -- Players are never steered: they pick any tile.
 local function skillIntent(skillDef: any): string
+	-- BUG-136 (BUG-HUNT-15, 2026-11-22): a shield grant (isShield: Retribution Shell, Vital Barrier,
+	-- Bastion Projection, Bulwark Field) only helps the unit it lands on. Retribution Shell's
+	-- "Direct Damage" tag is the break retaliation against the ATTACKER, not an effect on the target,
+	-- so it made the skill "mixed" and the enemy AI shielded player units.
+	if skillDef.isShield then
+		return "beneficial"
+	end
 	local harmful, beneficial = false, false
 	for _, tag in ipairs(skillDef.tags or {}) do
 		if tag == "Direct Damage" or tag == "Debuff" then
@@ -155,6 +182,10 @@ end
 --      Giant race tag overrides this to +/-5."
 local function isMeleeElevationLegal(actor, target, attackRange)
 	if not attackRange or attackRange > 2 then return true end -- ranged, no limit
+	-- BUG-280 (batch 24, Studio pass 15): DB elements_statuses Flight: "Melee not height-restricted." A flyer's
+	-- effective elevation is tile +5, so it failed the +/-2 rule against every ground unit next to it and could
+	-- never melee (basic attack, melee skills, interact reach). A flying attacker now skips the elevation limit.
+	if StatusService.HasStatus(actor, "Flight") then return true end
 	local atkElev = getEffectiveElevation(actor)
 	local defElev = GameConstants.GetElevation(target.tileX, target.tileY)
 	local elevDiff = math.abs(atkElev - defElev)
@@ -187,6 +218,10 @@ local function debugLog(msg: string)
 		print(msg)
 	end
 end
+-- BUG-HUNT-05 diagnostic (2026-11-22, no gameplay effect): when true, a PLAYER unit with move range > 0
+-- that gets 0 move candidates warns once per call with each neighbour tile's blocker / terrain /
+-- elevation / occupant data, so a Studio repro shows why it is stuck. Default false.
+local DEBUG_ZERO_MOVES = false
 
 -- Optional: TileEffectService injected at runtime (DI, mirrors CommandService/
 -- BattleCoordinator) so pathfinding can honor active tile-effect move-cost bonuses
@@ -194,6 +229,14 @@ end
 local _tileEffectService = nil
 function TargetingService.SetTileEffectService(tes)
 	_tileEffectService = tes
+end
+
+-- BUG-144 (BUG-HUNT-05, 2026-11-22, accepted): Move refuses a destination the unit could not walk off.
+-- The check is the SAME helper Skyfall Lance landings use (CommandService landingHasWalkExit, BUG-120 /
+-- BUG-130), injected by Main (ARC-004: CommandService already requires this module). nil = no filter.
+local _walkExitCheck: any = nil
+function TargetingService.SetWalkExitCheck(fn)
+	_walkExitCheck = fn
 end
 
 --------------------------------------------------
@@ -501,10 +544,13 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 					local stepCost = dir.cost * terrainCost
 					-- FT-020 Phantom Steps: moving THROUGH an enemy-occupied tile adds the through-cost (+1).
 					-- Added to this step BEFORE the range check so a phantom path is costed correctly.
+					-- BUG-279: a Kick Boots kick that LANDS on the enemy tile does not pay this cost; only crossing does.
+					local _phantomExtra = 0
 					if canThroughEnemy and throughEnemyCost > 0 then
 						local _oc = occupancy[key]
 						if _oc and _oc ~= actor and _oc.side ~= actor.side then
 							stepCost = stepCost + throughEnemyCost
+							_phantomExtra = throughEnemyCost
 						end
 					end
 					if #_enemyWardens > 0 then
@@ -516,13 +562,15 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 						end
 					end
 					local newCost  = current.cost + stepCost
+					local kickCost = newCost - _phantomExtra -- BUG-279: landing cost for a kick on this tile
 					-- Terrain move costs may be fractional (e.g. Swamp/Deep Water 1.5 after the
 					-- Sep 28 2026 halving). A tile is reachable when its EXACT accumulated path
 					-- cost is within range — no per-tile or per-total rounding (user clarified
 					-- Sep 28 2026: fractional costs must not inflate a tile's cost). e.g. range 3
 					-- reaches two 1.5 tiles (3.0) OR one 1.5 + one 1.0 (2.5), etc.
-					if newCost <= range
-						and (visited[key] == nil or visited[key] > newCost)
+					if (newCost <= range and (visited[key] == nil or visited[key] > newCost))
+						or (canKick and _phantomExtra > 0 and kickCost <= range
+							and (visited[key] == nil or visited[key] > kickCost)) -- BUG-279
 					then
 						local nextElev = GameConstants.GetElevation(nx, ny)
 						local elevDiff = nextElev - currentElev
@@ -548,7 +596,12 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 								-- FT-020 Phantom Steps: traverse (not land on) enemy-occupied tiles.
 								or (canThroughEnemy and occupant ~= actor and occupant.side ~= actor.side)
 
-							if passable then
+							-- BUG-272 (batch 23, Studio pass 14): ONE Kick Boots landing rule for walkers AND flyers. Flight (and
+							-- Phantom Steps) make an enemy tile passable, so the old "elseif canKick" after "if passable" never ran
+							-- for them and a flying kicker was never offered the enemy tile.
+							local kickLanding = canKick and not obsPassOver and occupant ~= nil and occupant ~= actor
+								and occupant.side ~= actor.side
+							if passable and newCost <= range and (visited[key] == nil or visited[key] > newCost) then
 								visited[key] = newCost
 								parent[key] = tileKey(current.x, current.y)
 
@@ -567,18 +620,19 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 								end
 
 								table.insert(queue, { x = nx, y = ny, cost = newCost })
-						elseif canKick and not obsPassOver and occupant ~= actor
-								and occupant.side ~= actor.side then
-								-- FT-019 Kick Boots: an ENEMY tile is a TERMINAL landing candidate -- the kicker may
-								-- END its Move on it (knockback at commit) but may NOT path THROUGH it, so visit +
-								-- offer it as a candidate and deliberately do NOT queue it for further expansion.
-								if visited[key] == nil or visited[key] > newCost then
-									visited[key] = newCost
+							end
+							if kickLanding then
+								-- FT-019 Kick Boots: an ENEMY tile is a landing candidate -- the kicker may END its Move on it
+								-- (knockback at commit). A walker may NOT path THROUGH it (it is not passable, so it was not queued
+								-- above); a flyer still passes over it as Flight allows. The range check above already made sure
+								-- newCost beats visited[key].
+								if visited[key] == nil or visited[key] > kickCost then
+									visited[key] = kickCost
 									parent[key] = tileKey(current.x, current.y)
-									table.insert(candidates, {
-										tileX = nx, tileY = ny, pathCost = newCost, isKick = true
-									})
 								end
+								table.insert(candidates, {
+									tileX = nx, tileY = ny, pathCost = kickCost, isKick = true
+								})
 							end
 						end
 					end
@@ -627,6 +681,36 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 		end
 	end
 
+	-- BUG-121 (BUG-HUNT-06, 2026-11-22): a tile reached again by a cheaper route was inserted a second
+	-- time, so the prompt listed e.g. 17,11(5) and 17,11(4). Keep ONE entry per tile at its final
+	-- (lowest) cost, visited[key]; parent[key] already holds that cheapest route for the path below.
+	do
+		local deduped, seen = {}, {}
+		for _, cand in ipairs(candidates) do
+			local ck = tileKey(cand.tileX, cand.tileY)
+			if not seen[ck] and cand.pathCost == visited[ck] then
+				seen[ck] = true
+				table.insert(deduped, cand)
+			end
+		end
+		candidates = deduped
+	end
+
+	-- BUG-144 (BUG-HUNT-05, accepted 2026-11-22): drop a destination the unit could not walk off afterwards
+	-- (e.g. a pit it can drop into, Downward Jump = Jump + 2, but never climb out of). Same check as the
+	-- Skyfall Lance landing (BUG-120 / BUG-130): map geometry only, Flight always passes. A Rabbit Folk
+	-- hopper is not filtered: the check does not model Hop Step exits, so it could refuse a tile the hopper
+	-- can leave. Teleport (Portal Treads) returned above and is unchanged.
+	if _walkExitCheck and not canHop then
+		local kept = {}
+		for _, cand in ipairs(candidates) do
+			if _walkExitCheck(actor, cand.tileX, cand.tileY) then
+				table.insert(kept, cand)
+			end
+		end
+		candidates = kept
+	end
+
 	-- Reconstruct path for each candidate by tracing parent chain
 	for _, cand in ipairs(candidates) do
 		local path = {}
@@ -644,6 +728,23 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 		cand.path = path
 	end
 
+	if DEBUG_ZERO_MOVES and #candidates == 0 and range > 0 and actor.side == "Player" then
+		local here = GameConstants.GetElevation(actor.tileX, actor.tileY)
+		local parts = {}
+		for dx = -1, 1 do
+			for dy = -1, 1 do
+				local nx, ny = actor.tileX + dx, actor.tileY + dy
+				if (dx ~= 0 or dy ~= 0) and isInsideMap(nx, ny, mapWidth, mapHeight) then
+					table.insert(parts, string.format("(%d,%d) e%d blk=%s imp=%s occ=%s", nx, ny,
+						GameConstants.GetElevation(nx, ny), tostring(GameConstants.IsBlocked(nx, ny)),
+						tostring(GameConstants.IsImpassableTerrain(nx, ny)), tostring(occupancy[tileKey(nx, ny)] ~= nil)))
+				end
+			end
+		end
+		warn(string.format("[TargetingService] DEBUG 0 moves: %s at (%d,%d) e%d range=%s jump=%s down=%s flight=%s | %s",
+			tostring(actor.name), actor.tileX, actor.tileY, here, tostring(range), tostring(jump), tostring(downJump),
+			tostring(hasFlight), table.concat(parts, "; ")))
+	end
 	return candidates
 end
 
@@ -679,7 +780,12 @@ end
 -- saw no "closer" tile and shuffled in place. Callers that pass no mover keep the old field.
 -- The field floods FROM the goal, so each step goes neighbour -> current in walking terms:
 -- the mover walks from (nx,ny) onto (current), climbing elev(current) - elev(nx).
-function TargetingService.ComputeDistanceField(goalX: any, goalY: any, mapWidth: any, mapHeight: any, mover: any?): any
+-- BUG-147 (BUG-HUNT-12, accepted 2026-11-22): optional `seedNeighbours`. When true, the goal's 8 walkable
+-- neighbour tiles (on the map, not a wall / object, not impassable, not a chasm floor) are seeded at
+-- distance 1 WITHOUT the mover's climb check onto the goal tile. A target standing on a ledge the mover
+-- cannot climb onto no longer leaves the field stuck at its seed ("boxed dist=1009"): the mover only
+-- needs to reach a tile next to it. Callers that pass nothing keep the old field.
+function TargetingService.ComputeDistanceField(goalX: any, goalY: any, mapWidth: any, mapHeight: any, mover: any?, seedNeighbours: boolean?): any
 	local field = {}
 	local climbLimit, dropLimit = nil, nil
 	if mover and not StatusService.HasStatus(mover, "Flight") then
@@ -697,6 +803,21 @@ function TargetingService.ComputeDistanceField(goalX: any, goalY: any, mapWidth:
 	field[goalKey] = 0
 
 	local queue = { { x = goalX, y = goalY } }
+	if seedNeighbours then
+		-- BUG-150 (W2): only seed neighbours within the melee +/-2 elevation rule (isMeleeElevationLegal base).
+		local _goalElev = GameConstants.GetElevation(goalX, goalY)
+		for _, dir in ipairs(DIRECTIONS) do
+			local sx, sy = goalX + dir.dx, goalY + dir.dy
+			if isInsideMap(sx, sy, mapWidth, mapHeight) and field[tileKey(sx, sy)] == nil
+				and not GameConstants.IsBlocked(sx, sy)
+				and not GameConstants.IsImpassableTerrain(sx, sy)
+				and not (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(sx, sy))
+				and math.abs(GameConstants.GetElevation(sx, sy) - _goalElev) <= 2 then
+				field[tileKey(sx, sy)] = 1
+				table.insert(queue, { x = sx, y = sy })
+			end
+		end
+	end
 	local head = 1
 	while head <= #queue do
 		local current = queue[head]
@@ -876,12 +997,37 @@ end
 -- ATTACK CANDIDATES (Chebyshev range, enemy only)
 --------------------------------------------------
 
+-- Race (Catau on water) and trait (Restless / Sniper's Perch) range are added HERE, once, for every
+-- caller -- turn prompt, AI, counter reach, validation (fix 2026-10-29: the prompt and AI left the
+-- trait out, and validation added race twice). BUG-280: split out so the refusal text uses the same range.
+local function fullBasicAttackRange(actor, range)
+	return (range or 1) + RacePassiveService.GetRangeModifier(actor) + TraitEffectService.GetAttackRangeModifier(actor)
+end
+
+-- BUG-280 (batch 24): the ONE reach test for a basic attack on one unit (max range, weapon min range,
+-- line of sight, melee elevation), in that order. GetAttackCandidates uses it to build the list and
+-- ValidateSelection uses it to say which check failed. Returns ok, reason (nil when ok), distance.
+local function basicAttackReach(actor, unit, allUnits, range, minRange)
+	local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
+	if dist > range then
+		return false, string.format("is out of basic attack range (%d). Distance: %d", range, dist), dist
+	end
+	if dist < minRange then
+		return false, string.format("is inside the weapon's minimum range (%d). Distance: %d", minRange, dist), dist
+	end
+	if not TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
+		allUnits, getEffectiveElevation(actor), actor.weaponProjectileType, actor.side) then
+		return false, "is not in line of sight", dist
+	end
+	if not isMeleeElevationLegal(actor, unit, range) then
+		return false, string.format("is too far up or down for a melee attack (elevation %s vs %s)",
+			tostring(getEffectiveElevation(actor)), tostring(GameConstants.GetElevation(unit.tileX, unit.tileY))), dist
+	end
+	return true, nil, dist
+end
+
 function TargetingService.GetAttackCandidates(actor, allUnits, range)
-	range = range or 1
-	-- Race (Catau on water) and trait (Restless / Sniper's Perch) range are added HERE, once, for every
-	-- caller -- turn prompt, AI, counter reach, validation (fix 2026-10-29: the prompt and AI left the
-	-- trait out, and validation added race twice).
-	range = range + RacePassiveService.GetRangeModifier(actor) + TraitEffectService.GetAttackRangeModifier(actor)
+	range = fullBasicAttackRange(actor, range)
 	-- Support minimum range (ranged weapons cannot hit adjacent targets)
 	local minRange = actor.weaponMinRange or 1
 
@@ -890,14 +1036,15 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 	for _, unit in ipairs(allUnits) do
 		if unit.isAlive and unit.side ~= actor.side
 			and not StatusService.HasStatus(unit, "Hide") then
-			local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
-			if dist <= range
-				and dist >= minRange
-				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
-					allUnits, getEffectiveElevation(actor), actor.weaponProjectileType, actor.side)
-				and isMeleeElevationLegal(actor, unit, range)
-			then
+			local reachOk, reachWhy, dist = basicAttackReach(actor, unit, allUnits, range, minRange)
+			if reachOk then
 				table.insert(candidates, unit)
+			elseif DEBUG_TARGETING and dist <= 2 then
+				-- BUG-HUNT-10 diagnostic (DEBUG_TARGETING only, no gameplay effect): why an adjacent / near
+				-- enemy is not a basic-attack target (reach incl. weapon min range, LoS, melee elevation).
+				debugLog(string.format("[TargetingService] AttackCand %s REJECTED %s: %s (range=%d minRange=%d proj=%s)",
+					tostring(actor.name), tostring(unit.name), tostring(reachWhy), range, minRange,
+					tostring(actor.weaponProjectileType)))
 			end
 		end
 	end
@@ -908,6 +1055,10 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 		local kept = {}
 		for _, c in ipairs(candidates) do
 			if c.id == taunter.id then table.insert(kept, c) end
+		end
+		if DEBUG_TARGETING and #kept < #candidates then
+			debugLog(string.format("[TargetingService] AttackCand %s is Taunted by %s: %d -> %d targets",
+				tostring(actor.name), tostring(taunter.name), #candidates, #kept))
 		end
 		candidates = kept
 	end
@@ -1067,7 +1218,7 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 		or targetRules == "Self, Ally Unit"
 	local isAllyOnlyRule = targetRules == "Ally Unit"
 	local isIndiscriminate = targetRules == "Ally Unit, Enemy Unit, Self"
-	-- All-tile widening (2026-10-24): ally-only / enemy-only skills (minus the six
+	-- All-tile widening (2026-10-24): ally-only / enemy-only skills (minus the seven
 	-- carve-outs) may target a unit of ANY side. LoS is unchanged per skill (we do
 	-- NOT touch skipLos), so a widened enemy skill still needs LoS to its target.
 	local widened = TargetingService.IsWidenedSkill(skillDef)
@@ -1355,8 +1506,23 @@ function TargetingService.ValidateSelection(
 			end
 		end
 
+		-- BUG-280 (batch 24): name the check that really failed (same gates as GetAttackCandidates:
+		-- Hide, Taunt, then the shared basicAttackReach), not always "out of basic attack range".
+		local why = nil
+		if StatusService.HasStatus(selection, "Hide") then
+			why = "is hidden"
+		else
+			local taunter = StatusService.GetTaunter(actor, allUnits)
+			if taunter and taunter.id ~= selection.id then
+				return false, string.format("%s is Taunted by %s and may only basic-attack %s.",
+					tostring(actor.name), tostring(taunter.name), tostring(taunter.name))
+			end
+			local _ok, reachWhy = basicAttackReach(actor, selection, allUnits,
+				fullBasicAttackRange(actor, attackRange), actor.weaponMinRange or 1)
+			why = reachWhy
+		end
 		return false, string.format(
-			"Target %s is out of basic attack range.", selection.name
+			"Target %s %s.", tostring(selection.name), why or "is out of basic attack range"
 		)
 	end
 
@@ -1373,6 +1539,13 @@ function TargetingService.ValidateSelection(
 
 		-- Ground targeting: validate tile coords + range only
 		if target and target.isGroundTarget then
+			-- BUG-118 (BUG-HUNT-14): a unit-target skill that is not a widened any-tile skill
+			-- (e.g. the carve-outs Skyfall Lance / Reckless Charge) never takes a bare tile. It
+			-- used to pass here on range alone, spend AP/MP on "Ground(x,y): -0 HP", and a charge
+			-- could resolve onto its own caster.
+			if not selection.widened and TargetingService.IsUnitOnlyTargetRule(targetRules) then
+				return false, "This skill must target a unit."
+			end
 			local dist = chebyshevDistance(actor.tileX, actor.tileY, target.tileX, target.tileY)
 			if dist > skillRange then
 				return false, string.format(

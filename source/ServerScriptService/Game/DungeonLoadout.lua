@@ -46,6 +46,7 @@ local LOCKED = "Locked in the dungeon." -- SB-22 (approved 2026-11-15 9:09 PM)
 local FULL = "Your bag is full" -- SB-13
 local BATTLE_ONLY = "Only usable in battle." -- SB-24
 local GENERIC = "Something went wrong. Try again." -- approved generic error
+local BAG_ONLY = "Only items in the Bag can be used here." -- BUG-153 (HUNT-17), loadout_ui_spec 130 (approved 2026-11-22)
 local RATE_LIMIT = 0.2 -- SEC-001: seconds between two dungeon loadout changes
 local CATS = table.freeze({ skillCards = true, augmentCards = true, consumables = true })
 
@@ -591,7 +592,7 @@ function L.UseItem(playerId: string, consumableId: any, unitId: any): (boolean, 
 	if not run.partySet[unitId] then return false, "Invalid request" end
 	local key = "consumables:" .. consumableId
 	local have = (run.bag.cards or {})[key] or 0
-	if have <= 0 then return false, "Invalid request" end
+	if have <= 0 then return false, BAG_ONLY end -- BUG-153: not a Bag copy (e.g. a unit's equipped item)
 	local eff = MapUse.Get(consumableId)
 	if not eff then return false, BATTLE_ONLY end
 	local targets: { string } = {}

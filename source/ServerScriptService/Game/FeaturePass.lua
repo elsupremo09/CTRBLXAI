@@ -38,6 +38,9 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TerrainData = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("TerrainData"))
+-- BUG-109: Jump-1 walker for the key-tile guard (single source, DAT-001). One-way require:
+-- ElevationPass never requires FeaturePass.
+local ElevationPass = require(script.Parent:WaitForChild("ElevationPass"))
 
 local FeaturePass = {}
 
@@ -1609,6 +1612,143 @@ local CHOKE_HARD_STOP_MARKERS = { PD = true, ED = true }
 local CHOKE_POI_ADV_MARKERS   = { POI = true, ADV = true }
 local CHOKE_POI_ADV_REFUSED   = "POI/ADV seal refused: objective only reachable across the span"
 
+--------------------------------------------------
+-- KEY-TILE WALKABILITY GUARD (BUG-109, 2026-11-22). Extends the Chokepoint Seal Guard
+-- (map_gen_rules row 62) to every placement that makes floor unstandable: a deliberate gap /
+-- chasm (shortcut or chokepoint) or a Molten / Quicksand hazard may never cut a PD/ED/OBJ/POI
+-- tile off from the Jump-1 main walkable area (reachable from PD AND able to walk back;
+-- SIM_pocket_breaker_20261121 section 3, "Weak spots"). Reachability is
+-- ElevationPass.AnalyzeWalkability, the same walker Phase 7b and V13 use (no second walker,
+-- DAT-001); elevation is still flat here, so this is the topology part of that walker, and
+-- OBS-marker tiles are passed as obstacles (obsByMarker). Only key tiles that were inside
+-- Main before the placement are protected (pre-existing pockets are Phase 7b's job).
+-- Repair-only, never rejects the map: a cutting gap is MOVED to the next crossing (at most
+-- GAP_CHOKE_MAX_CANDIDATES tries, deterministic order, no extra rng) or dropped; a chokepoint
+-- extension that cuts is refused (falls back to a shortcut); a cutting hazard is SKIPPED
+-- (every tile field and the used set restored from a deep snapshot).
+--------------------------------------------------
+local WALK_GUARD_KEY_MARKERS = { PD = true, ED = true, OBJ = true, POI = true }
+local WALK_GUARD_REFUSED     = "would cut PD/ED/OBJ/POI off the Jump-1 main area"
+local WALK_GUARD_HAZARD_TERRAIN = { Molten = true, Quicksand = true }
+local WALK_GUARD_HAZARD_FEATURES = { LavaChannel = true, SandyExpanse = true }
+
+--- Per-map guard audit (mapState.featureWalkGuard); created on first use.
+local function walkGuardAudit(mapState)
+	if not mapState.featureWalkGuard then
+		mapState.featureWalkGuard = { checks = 0, gapsMoved = 0, gapsDropped = 0,
+			sealsRefused = 0, hazardsSkipped = 0, keyTilesKept = 0 }
+	end
+	return mapState.featureWalkGuard
+end
+
+--- Set (coordKey) of PD/ED/OBJ/POI tiles outside the Jump-1 main walkable area right now.
+local function keyTilesOffMain(mapState)
+	local audit = walkGuardAudit(mapState)
+	audit.checks = audit.checks + 1
+	local wa = ElevationPass.AnalyzeWalkability(mapState, { obsByMarker = true })
+	local tiles, w, h = mapState.tiles, mapState.width, mapState.height
+	local off = {}
+	for y = 1, h do
+		for x = 1, w do
+			if WALK_GUARD_KEY_MARKERS[tiles[y][x].marker] and not wa.main[(y - 1) * w + x] then
+				off[coordKey(x, y)] = true
+			end
+		end
+	end
+	return off
+end
+
+--- Key tiles cut off now that were in Main at `baseline` (0 = the placement is fine).
+local function walkGuardNewCuts(mapState, baseline)
+	local cut = 0
+	for k in pairs(keyTilesOffMain(mapState)) do
+		if not baseline[k] then cut = cut + 1 end
+	end
+	return cut
+end
+
+local function walkGuardCopy(v)
+	if type(v) ~= "table" then return v end
+	local c = {}
+	for k, x in pairs(v) do c[k] = walkGuardCopy(x) end
+	return c
+end
+
+--- Deep snapshot of every field of every tile (an attempt may touch any tile: buffers spill
+--- across regions), so a skipped placement restores fully.
+local function snapshotTiles(tiles, w, h)
+	local snap = {}
+	for y = 1, h do
+		local row = {}
+		for x = 1, w do row[x] = walkGuardCopy(tiles[y][x]) end
+		snap[y] = row
+	end
+	return snap
+end
+
+--- Restore in place (tile tables keep their identity: gap backups hold tile references).
+--- Fields added by the attempt are removed; nested tables are refilled in place.
+local function restoreTiles(tiles, w, h, snap)
+	for y = 1, h do
+		for x = 1, w do
+			local t, s = tiles[y][x], snap[y][x]
+			for k in pairs(t) do
+				if s[k] == nil then t[k] = nil end
+			end
+			for k, v in pairs(s) do
+				local cur = t[k]
+				if type(v) == "table" and type(cur) == "table" then
+					for ck in pairs(cur) do cur[ck] = nil end
+					for ck, cv in pairs(v) do cur[ck] = walkGuardCopy(cv) end
+				else
+					t[k] = walkGuardCopy(v)
+				end
+			end
+		end
+	end
+end
+
+--- Hazard commit check after a placement that started from `snap` / `usedSnap`. Returns true
+--- when the placement is kept; otherwise tiles and `usedSet` are restored (placement skipped).
+--- No walkability check at all unless the placement created Molten / Quicksand.
+local function walkGuardHazardKeep(mapState, snap, usedSet, usedSnap)
+	local tiles, w, h = mapState.tiles, mapState.width, mapState.height
+	local created = false
+	for y = 1, h do
+		for x = 1, w do
+			local tr = tiles[y][x].terrain
+			if WALK_GUARD_HAZARD_TERRAIN[tr] and snap[y][x].terrain ~= tr then
+				created = true
+				break
+			end
+		end
+		if created then break end
+	end
+	if not created then return true end
+	local after = keyTilesOffMain(mapState)
+	if next(after) == nil then return true end
+	-- Some key tile is off Main: compare against the state before this placement.
+	local post = snapshotTiles(tiles, w, h)
+	restoreTiles(tiles, w, h, snap)
+	local before = keyTilesOffMain(mapState)
+	local cut = 0
+	for k in pairs(after) do
+		if not before[k] then cut = cut + 1 end
+	end
+	if cut == 0 then
+		restoreTiles(tiles, w, h, post)
+		return true
+	end
+	if usedSet and usedSnap then
+		for k in pairs(usedSet) do usedSet[k] = nil end
+		for k, v in pairs(usedSnap) do usedSet[k] = v end
+	end
+	local audit = walkGuardAudit(mapState)
+	audit.hazardsSkipped = audit.hazardsSkipped + 1
+	audit.keyTilesKept = audit.keyTilesKept + cut
+	return false
+end
+
 --- A tile a chokepoint strip may terminate against (a "wall"). Lane tiles
 --- never count as walls: repairBridgePass / TransitionPass may still
 --- repaint them. Spans and span banks are always walkable.
@@ -1694,7 +1834,9 @@ end
 --- Try to turn a just-placed SHORTCUT gap into a CHOKEPOINT. Mutates tiles
 --- only on success. Returns (extTileList, nil, poiAdvSealList) on success,
 --- or (nil, reason, poiAdvSealAttempted) on failure.
-local function extendGapToChokepoint(mapState, tiles, w, h, gapRec, px, py, policy, maxExtend)
+--- keyBaseline (BUG-109): key tiles already off Main before this gap; the sealed result
+--- (base strip + extension) may not cut any other key tile off.
+local function extendGapToChokepoint(mapState, tiles, w, h, gapRec, px, py, policy, maxExtend, keyBaseline)
 	local id  = gapRec.id
 	local cfg = mapState.biomeElevation or {}
 
@@ -1827,6 +1969,12 @@ local function extendGapToChokepoint(mapState, tiles, w, h, gapRec, px, py, poli
 		and not chokePoiAdvGuard(tiles, w, h, pdList, poiAdvSeals, spanBlocked, after) then
 		return revert(CHOKE_POI_ADV_REFUSED)
 	end
+	-- 3c. BUG-109: the sealed gap may not cut a PD/ED/OBJ/POI tile off the Jump-1 main area.
+	if keyBaseline and walkGuardNewCuts(mapState, keyBaseline) > 0 then
+		local audit = walkGuardAudit(mapState)
+		audit.sealsRefused = audit.sealsRefused + 1
+		return revert(WALK_GUARD_REFUSED)
+	end
 	return ext, nil, poiAdvSeals
 end
 
@@ -1931,6 +2079,11 @@ local function placeGapsAndSpans(mapState, tiles, w, h, rng)
 		if #cands == 0 then break end
 		local pick = cands[rng:NextInteger(1, #cands)]
 		local id   = "gap_" .. tostring(#mapState.bridgeGaps + 1)
+		-- BUG-109: key tiles already off the Jump-1 main area BEFORE this gap is cut (computed
+		-- once per gap, before any attempt: every failed attempt below is fully undone, so the
+		-- map is the same at the start of each try).
+		local keyBaseline = keyTilesOffMain(mapState)
+		local function keyBase() return keyBaseline end
 
 		-- Build the gap strip for a crossing: `width` span tiles on the spine,
 		-- strip rows perpendicular to travel reaching halfLen either side.
@@ -1964,9 +2117,11 @@ local function placeGapsAndSpans(mapState, tiles, w, h, rng)
 
 		-- Cut the strip + lay the span; returns the gap record, or nil (fully
 		-- rolled back) when the strip is too short or PD->ED would disconnect.
+		-- checkKeys (BUG-109): also roll back (third return = WALK_GUARD_REFUSED) when the cut
+		-- would cut a PD/ED/OBJ/POI tile off the Jump-1 main area.
 		local spanKind = spans[rng:NextInteger(1, #spans)]
 		local spanDef  = BRIDGE_SPAN_DEFS[spanKind] or BRIDGE_SPAN_DEFS.Plank
-		local function cutGap(pk)
+		local function cutGap(pk, checkKeys)
 			local spanList, gapList = buildStrip(pk)
 			if #gapList < 2 * width then return nil end
 			local backup = {}
@@ -2044,6 +2199,10 @@ local function placeGapsAndSpans(mapState, tiles, w, h, rng)
 				undo()
 				return nil
 			end
+			if checkKeys and walkGuardNewCuts(mapState, keyBase()) > 0 then
+				undo()
+				return nil, nil, WALK_GUARD_REFUSED
+			end
 			return rec, undo
 		end
 
@@ -2072,7 +2231,7 @@ local function placeGapsAndSpans(mapState, tiles, w, h, rng)
 				local rec, undo = cutGap(c)
 				if rec then
 					local ext, why, poiAdv = extendGapToChokepoint(mapState, tiles, w, h,
-						rec, c.dy, c.dx, policy, chokeMaxExt)
+						rec, c.dy, c.dx, policy, chokeMaxExt, keyBase())
 					if ext then
 						for _, p in ipairs(ext) do
 							table.insert(rec.gapTiles, p)
@@ -2108,7 +2267,37 @@ local function placeGapsAndSpans(mapState, tiles, w, h, rng)
 			end
 		end
 		if not gapRec then
-			gapRec = cutGap(pick)
+			-- BUG-109: a shortcut that would cut a key tile off is MOVED to the next crossing
+			-- (pick first, then candidate order; capped, no extra rng). If the rolled crossing
+			-- fails for any other reason the old behaviour stays (no gap this round); a moved
+			-- try that fails for another reason just moves on.
+			local tries = { pick }
+			for _, c in ipairs(cands) do
+				if #tries >= GAP_CHOKE_MAX_CANDIDATES then break end
+				if c ~= pick then table.insert(tries, c) end
+			end
+			local guardRefused = false
+			for ti, c in ipairs(tries) do
+				local rec, _, why = cutGap(c, true)
+				if rec then
+					gapRec = rec
+					if ti > 1 then
+						rec.walkGuardMoved = true
+						local audit = walkGuardAudit(mapState)
+						audit.gapsMoved = audit.gapsMoved + 1
+					end
+					break
+				end
+				if why == WALK_GUARD_REFUSED then
+					guardRefused = true
+				elseif ti == 1 then
+					break -- the rolled crossing failed for an old reason: old behaviour (no gap)
+				end
+			end
+			if not gapRec and guardRefused then
+				local audit = walkGuardAudit(mapState)
+				audit.gapsDropped = audit.gapsDropped + 1
+			end
 			if gapRec then
 				if wantChoke then
 					gapRec.rolledType    = "chokepoint"
@@ -2163,6 +2352,22 @@ local function placeFeature(featureType, candidates, minSize, maxSize, minCluste
 	return placer(candidates, minSize, maxSize, minCluster, opts, rng, tiles, w, h, regionId, usedSet)
 end
 
+--- BUG-109: placeFeature for the Run phases. A hazard feature (Lava Channel = Molten, Sandy
+--- Expanse = Quicksand) that would cut a PD/ED/OBJ/POI tile off the Jump-1 main area is
+--- SKIPPED: tiles and usedSet are restored and 0 tiles are reported. Other features unchanged.
+local function placeFeatureGuarded(mapState, featureType, candidates, minSize, maxSize, minCluster, opts, rng, tiles, w, h, regionId, usedSet)
+	if not WALK_GUARD_HAZARD_FEATURES[featureType] then
+		return placeFeature(featureType, candidates, minSize, maxSize, minCluster, opts, rng, tiles, w, h, regionId, usedSet)
+	end
+	local snap = snapshotTiles(tiles, w, h)
+	local usedSnap = table.clone(usedSet)
+	local placed = placeFeature(featureType, candidates, minSize, maxSize, minCluster, opts, rng, tiles, w, h, regionId, usedSet)
+	if placed > 0 and not walkGuardHazardKeep(mapState, snap, usedSet, usedSnap) then
+		return 0
+	end
+	return placed
+end
+
 --------------------------------------------------
 -- RUN
 --------------------------------------------------
@@ -2178,6 +2383,10 @@ function FeaturePass.Run(mapState)
 	local biomeId       = mapState.biomeId
 	local regionTypeMap = mapState.regionTypeMap
 	local regions       = mapState.regionResult.Regions
+
+	-- BUG-109: fresh per-map key-tile guard audit (one summary line at the end of Run).
+	mapState.featureWalkGuard = nil
+	local walkGuard = walkGuardAudit(mapState)
 
 	----------------------------------------------------
 	-- Build per-region tile lists (deterministic y,x scan).
@@ -2260,7 +2469,7 @@ function FeaturePass.Run(mapState)
 							watOpts = { linear = rng:NextNumber() < 0.5 }
 						end
 
-						local placed = placeFeature(
+						local placed = placeFeatureGuarded(mapState,
 							watFeatureType, watTiles,
 							defaults.minSize, adjMax,
 							defaults.minCluster, watOpts,
@@ -2320,7 +2529,7 @@ function FeaturePass.Run(mapState)
 					opts.advTiles = advTiles
 				end
 
-				local placed = placeFeature(
+				local placed = placeFeatureGuarded(mapState,
 					fDef.type, available,
 					fDef.minSize, adjMax,
 					fDef.minCluster, opts,
@@ -2442,6 +2651,13 @@ function FeaturePass.Run(mapState)
 				for _, cluster in ipairs(hzdClusters) do
 					if #cluster >= 3 then
 						local hzdPlaced = 0
+						-- BUG-109: Molten / Quicksand HZD placement is skipped if it would cut a
+						-- PD/ED/OBJ/POI tile off the Jump-1 main area (snapshot restored).
+						local hzdSnap, hzdUsedSnap = nil, nil
+						if hazardTerrain == "Molten" or hazardTerrain == "Sand" then
+							hzdSnap = snapshotTiles(tiles, w, h)
+							hzdUsedSnap = table.clone(usedSet2b)
+						end
 
 						if hazardTerrain == "Molten" then
 							-- Volcano HZD: 2-4 Molten tiles, then Rocky buffer.
@@ -2533,6 +2749,10 @@ function FeaturePass.Run(mapState)
 							end
 						end
 
+						if hzdSnap and hzdPlaced > 0
+							and not walkGuardHazardKeep(mapState, hzdSnap, usedSet2b, hzdUsedSnap) then
+							hzdPlaced = 0
+						end
 						if hzdPlaced > 0 then
 							phase2bTotal = phase2bTotal + hzdPlaced
 						end
@@ -2629,7 +2849,7 @@ function FeaturePass.Run(mapState)
 									end
 
 									if selectedType then
-										local placed = placeFeature(
+										local placed = placeFeatureGuarded(mapState,
 											selectedType, cluster,
 											NEU_FEATURE_DEFAULTS.minSize,
 											adjMax,
@@ -3193,6 +3413,13 @@ function FeaturePass.Run(mapState)
 	-- gap / span tiles are skipped (they are the real bridge mechanism).
 	----------------------------------------------------
 	repairBridgePass(tiles, w, h)
+
+	-- BUG-109: one key-tile guard summary per map (Phase 7b log style).
+	print(string.format(
+		"[FeaturePass] Key-tile guard (Jump 1): %d placement(s) changed (%d gap(s) moved, %d gap(s) dropped, %d chokepoint seal(s) refused, %d hazard(s) skipped); %d check(s)",
+		walkGuard.gapsMoved + walkGuard.gapsDropped + walkGuard.sealsRefused + walkGuard.hazardsSkipped,
+		walkGuard.gapsMoved, walkGuard.gapsDropped, walkGuard.sealsRefused, walkGuard.hazardsSkipped,
+		walkGuard.checks))
 
 	print(string.format("[FeaturePass] Complete. Processed %d regions.", #regions))
 	return mapState

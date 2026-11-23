@@ -92,6 +92,18 @@ local GameConstants = require(CTRBLXAI:WaitForChild("Shared"):WaitForChild("Game
 
 local GuildMenuService = {}
 
+-- BUG-170 (batch 13): base-side stat rebuilds of the whole roster (furniture placed / removed and at boot,
+-- Apothecary level / opening) and of one holder (Blacksmith item level) changed the live max HP but not the
+-- saved HP/MP record, so the Units screen (saved record) showed e.g. 390/390 while the battle used 395.
+-- Main wires the ONE shared sync helper here (LoadoutRequestHandlers.SyncPersistentResources, BUG-088/092;
+-- rules 19/20: max up -> current += diff, max down -> clamp, KO stays 0). nil (before wiring) = rebuild only.
+local _resourceSync: ((string, any) -> ())? = nil
+function GuildMenuService.SetResourceSync(fn: ((string, any) -> ())?) _resourceSync = fn end
+local function rebuildAndSync(u: any)
+	EquipmentService.RebuildUnitStats(u)
+	if _resourceSync and type(u) == "table" and u.id ~= nil then _resourceSync(u.id, u) end
+end
+
 --------------------------------------------------
 -- CONSTANTS
 --------------------------------------------------
@@ -455,7 +467,7 @@ GuildMenuService.AvailabilitySink = {
 function GuildMenuService.PersistItem(_pid: string, item: any)
 	local holder = item and item.instanceId and holderOf(item.instanceId) or nil
 	if holder then
-		EquipmentService.RebuildUnitStats(holder)
+		rebuildAndSync(holder) -- BUG-170: item level can change max HP/MP; keep the saved record in step
 	end
 end
 
@@ -1083,11 +1095,20 @@ function GuildMenuService.GetAwayUnitsForDeployment(opts: any?): { any }
 		inParty = {}
 		for _, mid in ipairs(members) do (inParty :: any)[mid] = true end
 	end
+	-- BUG-122 (BUG-HUNT-03, 2026-11-22): units placeable in THIS battle are never also listed as away.
+	-- A dungeon room's own party is marked dispatched ("Exploring a dungeon") for the run, so every
+	-- party member was sent twice: once placeable, once greyed. opts.excludeIds = the placeable units' ids.
+	local exclude: { [string]: boolean } = {}
+	if type(opts) == "table" and type(opts.excludeIds) == "table" then
+		for _, eid in ipairs(opts.excludeIds) do exclude[tostring(eid)] = true end
+	end
 	local out = {}
 	local units = playerUnits()
 	for _, id in sortedKeys(units) do
 		local u = units[id]
-		if (inParty == nil or (inParty :: any)[id] == true) and (if dungeon then DispatchService.IsUnitDispatched(_playerId, id) else isUnitAway(_playerId, id)) then
+		if not exclude[tostring(id)]
+			and (inParty == nil or (inParty :: any)[id] == true)
+			and (if dungeon then DispatchService.IsUnitDispatched(_playerId, id) else isUnitAway(_playerId, id)) then
 			local why = awayReason(_playerId, id)
 			table.insert(out, { id = id, name = u.name, level = u.level, awayReason = why,
 				portraitAssetId = u.portraitAssetId, -- 2026-11-20: away cells show the normal portrait, greyed
@@ -1185,6 +1206,17 @@ local function overview()
 			BuildingService.Refresh()
 			return BuildingService.OpenState()
 		end)(), -- Renown Rank unlocks: { [name] = { open, unlockRank, display, new } }
+		-- BUG-108 (PT-13): an unfinished dungeon run holds its party away; the Guild screen marks the
+		-- Dungeon button with the approved DUNGEON_AWAY_TEXT. True while any unit is locked by a run
+		-- (same injected check the away flags use; nil-safe when Main has not injected it).
+		dungeonRun = (function(): boolean
+			if not (_playerId and _unitLockCheck) then return false end
+			for id in playerUnits() do
+				if _unitLockCheck(_playerId, id) == true then return true end
+			end
+			return false
+		end)(),
+		dungeonRunText = DUNGEON_AWAY_TEXT,
 		battlesCompleted = battlesCompleted,
 		rosterCount = count,
 		-- Renown Rank for the header (display only; the server owns it). Step 2, 2026-11-12.
@@ -1753,6 +1785,7 @@ local function onGetDispatchBoard(player: Player)
 		local away = isUnitAway(_playerId, id)
 		local rec = if away then missionOf[id] else nil
 		local lu = live[id]
+		local res = PersistentStateService.GetDisplayResources(_playerId, id, lu) -- BUG-125 redo: saved record first
 		local race = lu.raceId and RaceData.GetRace(lu.raceId) or nil
 		local doc = lu.doctrineId and (DoctrineData :: any)[lu.doctrineId] or nil
 		table.insert(units, { id = id, name = lu.name, level = lu.level,
@@ -1761,7 +1794,7 @@ local function onGetDispatchBoard(player: Player)
 			portraitAssetId = lu.portraitAssetId, -- Dispatch screen portraits (display only)
 			-- 2026-11-19: the Units screen card fields, so Dispatch shows the same unit card (display only).
 			unitLevel = lu.level, race = race and race.name or "?", doctrine = doc and doc.name or "?",
-			hp = lu.currentHp, maxHp = lu.maxHp, mp = lu.currentMp, maxMp = lu.maxMp,
+			hp = res.currentHp, maxHp = res.maxHp, mp = res.currentMp, maxMp = res.maxMp,
 			-- Real-time Dispatch step 4 (2026-11-19): EXP-to-next for the screen's earning estimate. Display only.
 			xpToNext = (function() local okP, pr = pcall(ProgressionService.GetUnitLevelProgress, _playerId, id)
 				return if okP and type(pr) == "table" then pr.xpToNext else nil end)() })
@@ -1905,6 +1938,7 @@ local function onGetGuildUnits(player: Player)
 		local prog = ProgressionService.GetUnitLevelProgress(_playerId, id)
 		local race = u.raceId and RaceData.GetRace(u.raceId) or nil
 		local doc = u.doctrineId and (DoctrineData :: any)[u.doctrineId] or nil
+		local res = PersistentStateService.GetDisplayResources(_playerId, id, u) -- BUG-125 redo: saved record first
 		table.insert(list, {
 			id = id,
 			name = u.name,
@@ -1915,8 +1949,8 @@ local function onGetGuildUnits(player: Player)
 			atCap = prog.atCap,
 			race = race and race.name or "?",
 			doctrine = doc and doc.name or "?",
-			hp = u.currentHp, maxHp = u.maxHp,
-			mp = u.currentMp, maxMp = u.maxMp, -- Units screen HP/MP bars (2026-11-13)
+			hp = res.currentHp, maxHp = res.maxHp,
+			mp = res.currentMp, maxMp = res.maxMp, -- Units screen HP/MP bars (2026-11-13); BUG-125 redo: saved record
 			portraitAssetId = u.portraitAssetId, -- Units screen portrait (2026-11-13)
 			away = isUnitAway(_playerId, id),
 			awayReason = awayReason(_playerId, id),
@@ -1939,6 +1973,7 @@ local function partyMemberInfo(unitId: string): any
 	if not u then return nil end
 	local race = u.raceId and RaceData.GetRace(u.raceId) or nil
 	local doc = u.doctrineId and DoctrineData[u.doctrineId] or nil
+	local res = PersistentStateService.GetDisplayResources(_playerId, unitId, u) -- BUG-125 redo: saved record first
 	return {
 		id = unitId,
 		name = u.name,
@@ -1951,7 +1986,7 @@ local function partyMemberInfo(unitId: string): any
 		doctrineName = doc and doc.name or nil,
 		doctrineIcon = doc and doc.icon or nil,
 		-- Quest Board Choose Party view (2026-11-18): HP/MP bars + days left on a dispatch.
-		hp = u.currentHp, maxHp = u.maxHp, mp = u.currentMp, maxMp = u.maxMp,
+		hp = res.currentHp, maxHp = res.maxHp, mp = res.currentMp, maxMp = res.maxMp,
 		dispatchLeft = DispatchService.GetRemainingDays(_playerId, unitId),
 	}
 end
@@ -2757,7 +2792,7 @@ local function applyBuildingLevel(name: string, level: number)
 	if name == "Dispatch" then dispatchCache = nil end -- missions offered depend on the Dispatch level
 	-- Apothecary L9 charges / L10 slot change unit numbers: rebuild so they apply now.
 	if name == "Apothecary" then
-		for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
+		for _, u in playerUnits() do rebuildAndSync(u) end -- BUG-170: + shared HP/MP record sync
 	end
 	-- Training Grounds below L10 locks slot 2 again: those augments go back to storage.
 	if name == "TrainingGrounds" and buildingLevels[name] < before and _sweepLockedAugments then
@@ -2944,7 +2979,7 @@ function GuildMenuService.Init(deps: any)
 		onOpened = function(names: { string })
 			-- The Apothecary opening changes unit numbers (its charges): rebuild them now.
 			if table.find(names, "Apothecary") then
-				for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
+				for _, u in playerUnits() do rebuildAndSync(u) end -- BUG-170: + shared HP/MP record sync
 			end
 		end,
 	})
@@ -2970,7 +3005,7 @@ function GuildMenuService.Init(deps: any)
 			return id ~= nil and playerUnits()[id] == u
 		end,
 		rebuildAll = function()
-			for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
+			for _, u in playerUnits() do rebuildAndSync(u) end -- BUG-170: + shared HP/MP record sync
 		end,
 		markDirty = markDirty,
 		getMaterials = function() local _, r = balance() return r end, -- step 3 crafting

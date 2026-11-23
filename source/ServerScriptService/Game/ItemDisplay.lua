@@ -136,6 +136,9 @@ local function buildItemEntry(item)
 			rtDelay = profile and profile.rtDelay or 0,
 			minRange = profile and profile.minRange or 1,
 			maxRange = profile and profile.maxRange or 1,
+			-- Batch 8 (2026-11-22): the weapon's attack pattern label for the item popups (WeaponData
+			-- pattern label, weapons_equipment 165 "Line 3"). nil for Single (no row). Display only.
+			patternLabel = if profile and profile.pattern and profile.pattern ~= "Single" then WeaponData.GetPatternLabel(profile.pattern) else nil,
 			isWeapon = wArch.category == "Weapon",
 			isArmor = false,
 			icon = wArch.icon or nil,
@@ -143,6 +146,8 @@ local function buildItemEntry(item)
 			nativePassiveId = wArch.nativePassiveId or nil,
 			nativePassiveName = wArch.nativePassiveId and GearPassiveSummary.NativePassiveName(wArch.nativePassiveId) or nil,
 			nativePassiveDesc = WeaponData.GetPassiveDesc(wArch.nativePassiveId) or nil,
+			-- BUG-106: every built-in passive (Boomerang: Tricky + Rebound), text from WeaponData.
+			nativePassives = GearPassiveSummary.NativePassiveList(wArch),
 			projectileType = wArch.projectileType or nil,
 			element = WeaponData.GetInstanceElement(item) or nil,
 		}

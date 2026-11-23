@@ -108,12 +108,41 @@ local function syncBreakEquipment(unit, statusId)
 		(require :: any)(script.Parent.DoctrinePassiveService).SyncDualWield(unit)
 	end
 end
+-- BUG-218 (batch 18, Tester pass 7: Timesovereign 289/365 after Break was removed, "usually /397"): a status that
+-- changes primary stats (Weakened -10% all, Giant Transformation, Rush, Enlightened, any def with statPctMod such
+-- as Banner Blessing) is only read by EquipmentService.RebuildUnitStats (GetStatusStatModifiers), but nothing
+-- rebuilt the unit when such a status started or ended in battle (only the Dev GrantStatus / RemoveStatus
+-- commands did). Weakened sat on the unit with no effect on VIT / Max HP until the next unrelated rebuild (here
+-- the Break removal), which then dropped Max HP by 32 at once. Now the unit is rebuilt when such a status is
+-- applied, re-applied, stacked or ends (same rebuild and same "HP only capped, never raised" rule as Break).
+local REBUILD_STAT_STATUSES = { Weakened = true, ["Giant Transformation"] = true, Rush = true, Enlightened = true }
+local function syncStatStatus(unit, statusId)
+	if not unit or statusId == nil or type(unit.statusInstances) ~= "table" then return end
+	if not REBUILD_STAT_STATUSES[statusId] then
+		local def = GameConstants.STATUSES[statusId]
+		if not (def and def.statPctMod) then return end
+	end
+	-- Summons / item devices / objects carry an authored stat snapshot: never rebuilt (same guard as Break).
+	if unit.isSummon or unit.isItemDevice or unit.isObject then return end
+	-- BUG-219 (batch 18b, Tester W1): a rebuild that caps current HP (Weakened on a full-HP unit, a VIT buff ending
+	-- at full HP) gets its own log line, and the loss is recorded on the unit (_statCapLoss) so BattleTurnController
+	-- does not count it as hit damage. Deferred require: BattleVisualBroadcaster requires us (cycle-safe at call time).
+	local _pre = unit.currentHp or 0
+	(require :: any)(script.Parent.EquipmentService).RebuildUnitStats(unit)
+	local _cap = _pre - (unit.currentHp or 0)
+	if _cap > 0 then
+		unit._statCapLoss = (unit._statCapLoss or 0) + _cap
+		local _okB, _bvb = pcall(require, script.Parent.BattleVisualBroadcaster)
+		if _okB and _bvb and _bvb.MaxHpCapped then _bvb.MaxHpCapped(unit, _cap, statusId) end
+	end
+end
 -- A status ENDED (removed, expired, cleansed, purged, dispelled): Break sync, plus Oversleep --
 -- DB weapons_equipment 153: when Sleep ends the unit gains Sleep Immunity until the end of its next
 -- ready turn. One place for every removal path (2026-10-29, Tester FAIL fix: cleanses were missed).
 -- Never called on APPLY (syncBreakEquipment alone is), so applying Sleep does not grant immunity.
 local function onStatusEnded(unit, statusId)
 	syncBreakEquipment(unit, statusId)
+	syncStatStatus(unit, statusId)  -- BUG-218
 	if statusId == "Sleep" and unit and unit.isAlive ~= false and unit.statusInstances then
 		StatusService.ApplyStatus(unit, "Sleep Immunity", unit.id)
 	end
@@ -140,6 +169,13 @@ local _chainVisited: any = nil
 
 local _onConflictRemoved = nil
 function StatusService.SetConflictRemovedHandler(fn) _onConflictRemoved = fn end
+-- BUG-140 (BUG-HUNT-09 / BUG-HUNT-16, 2026-11-22): a status that runs out ON ITS OWN (turn tick in
+-- TickStatuses, CT tick in ProcessCtTick) was removed silently. The battle-log snapshot kept it, so the
+-- next caused diff of that unit named a wrong cause ("Hero is no longer War Cry (Burning tile)",
+-- "Taunt: 3 units are no longer Pinned"). Main injects the broadcaster hook (ARC-004; StatusService
+-- cannot require the broadcaster). Called once per naturally expired status id. nil = no-op.
+local _onNaturalExpiry = nil
+function StatusService.SetExpiredHandler(fn) _onNaturalExpiry = fn end
 
 local function removeByConflict(unit, removedId, causeId)
 	if StatusService.RemoveStatus(unit, removedId) then
@@ -586,8 +622,94 @@ local function vscale(inst)
 	return inst.valueScale or 1
 end
 
+-- BOSS RULES (BUG-155, batch 12; core_stats 39/43/44/55, numbers in GameConstants.BOSS_RULES).
+-- Hard control = a debuff that blocks every action or skips the turn (Sleep, Stun, Petrify ...).
+local function isHardControl(def): boolean
+	return def ~= nil and (def.skipsTurn == true or (def.blocks ~= nil and def.blocks.All == true))
+end
+StatusService.IsHardControl = isHardControl
+
+-- Runs right after Debuff Resistance on every application / refresh (same call sites): on a boss a
+-- debuff lasts x0.5 (hard control x0.2), rounded UP, never below 1; Petrify is a flat 300 CT.
+-- Tester batch 12 W2 (BUG-163): the boss part on its own, so the accumulate / stack / chain reapply
+-- branches (Burn, Venom, Bleed / Raptured / Wounded) can call it too. No-op unless a boss Debuff.
+local function applyBossDuration(unit, statusId, def, inst)
+	if def.kind ~= "Debuff" or not GameConstants.IsBoss(unit) or inst.permanent then return end
+	if statusId == "Petrify" and inst.remainingCt then
+		inst.remainingCt = GameConstants.BOSS_RULES.petrifyCt
+		return
+	end
+	local m = GameConstants.GetBossMod(unit, if isHardControl(def) then "hardControlDuration" else "debuffDuration")
+	if inst.remainingCt then
+		inst.remainingCt = math.max(1, math.ceil(inst.remainingCt * m))
+	elseif inst.remainingTurns then
+		inst.remainingTurns = math.max(1, math.ceil(inst.remainingTurns * m))
+	end
+end
+local _applyDebuffResistanceBase = applyDebuffResistance
+local function applyDebuffResistance(unit, statusId, def, inst, pen)
+	_applyDebuffResistanceBase(unit, statusId, def, inst, pen)
+	applyBossDuration(unit, statusId, def, inst)
+end
+
+-- BUG-156 (core_stats 45/46): Phase Break. Call after damage resolves. Each threshold (70/40/10% HP left)
+-- crossed for the first time: remaining RT 0 (ready to act), active debuff durations x0.5, then debuffs
+-- under 1 full turn / under 300 CT are removed (exactly 1 turn / 300 CT stay). Returns thresholds crossed.
+-- BUG-168 (batch 13): second return = the status ids the break removed (in removal order), so callers log
+-- each one's "is no longer <status>." line (BattleVisualBroadcaster.StatusWoreOff). Empty when none.
+-- Design (core_stats 46 "debuffs", kept): DoT debuffs such as Poison / Burn / Bleed count and can be removed.
+function StatusService.CheckBossPhaseBreak(unit): (number, { string })
+	if not GameConstants.IsBoss(unit) or not unit.isAlive or (tonumber(unit.maxHp) or 0) <= 0 then return 0, {} end
+	local R = GameConstants.BOSS_RULES
+	local th = R.phaseThresholds
+	local done = unit._bossPhase or 0
+	local frac = (unit.currentHp or 0) / unit.maxHp
+	local crossed = 0
+	while done < #th and frac <= th[done + 1] do
+		done += 1
+		crossed += 1
+	end
+	if crossed == 0 then return 0, {} end
+	unit._bossPhase = done
+	local removed = {}
+	for _ = 1, crossed do
+		-- BUG-161 (batch 12b): RT 0 for a channelling boss too. In the two-timer model a caster at RT <= 0
+		-- waits ("frozen") for its fixed channel deadline and takes its turn the moment the channel resolves
+		-- (BattleCoordinator.ResolveChannelDeadline), which is "ready to act" without breaking the channel.
+		unit.remainingRt = 0
+		local drop = {}
+		for _, inst in ipairs(unit.statusInstances or {}) do
+			local def = GameConstants.STATUSES[inst.id]
+			if def and def.kind == "Debuff" and not inst.permanent then
+				if inst.remainingCt then
+					local left = inst.remainingCt * R.phaseBreakDebuff
+					if left < R.phaseBreakMinCt then table.insert(drop, inst.id) else inst.remainingCt = math.ceil(left) end
+				elseif inst.remainingTurns then
+					local left = inst.remainingTurns * R.phaseBreakDebuff
+					if left < R.phaseBreakMinTurns then table.insert(drop, inst.id) else inst.remainingTurns = math.ceil(left) end
+				end
+			end
+		end
+		for _, id in ipairs(drop) do
+			if StatusService.RemoveStatus(unit, id) then table.insert(removed, id) end
+		end
+	end
+	print(string.format("[StatusService] Boss Phase Break | %s at %d/%d HP (phase %d), RT -> 0",
+		tostring(unit.name), unit.currentHp or 0, unit.maxHp, done))
+	return crossed, removed
+end
+
 -- durationTurnsOverride (optional, 2026-11-21): turn duration used instead of def.duration on a new
 -- application or refresh (weapon Freeze = 1 turn, StatusService.ApplyWeaponFreeze). nil = def.duration.
+-- BUG-300/BUG-301 (batch 29/29b): shared "standard Fire hit" for a Burn that arrives with no Fire
+-- damage (dev GrantStatus, Burning tile occupy/cross). terrain_effects row 23: the Burning tick is
+-- round(15% Max HP) Fire, from TILE_EFFECTS.Burning.tickDamage. Burn's own burnFraction (0.20,
+-- elements_statuses 57) then sets the stored amount inside ApplyStatus. Min 1.
+function StatusService.StandardFireHitDamage(unit)
+	local bt = GameConstants.TILE_EFFECTS and GameConstants.TILE_EFFECTS.Burning
+	return math.max(1, math.round(((unit and unit.maxHp) or 0) * ((bt and bt.tickDamage) or 0.15)))
+end
+
 function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt, durationCtOverride, burnFractionOverride, durationTurnsOverride)
 	local def = GameConstants.STATUSES[statusId]
 	if not def then
@@ -684,6 +806,11 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 	for _, inst in ipairs(unit.statusInstances) do
 		if inst.id == statusId then
 			if def.reapply == "refresh" then
+				-- BUG-155 (core_stats 43/44): hard control already on a boss is never refreshed.
+				if def.kind == "Debuff" and isHardControl(def) and GameConstants.IsBoss(unit) then
+					print(string.format("[StatusService] %s on boss %s not refreshed (hard control)", statusId, tostring(unit.name)))
+					return false, disruptsChannel
+				end
 				-- A permanent instance (race-granted Flight, 2026-10-29) is never shortened by a
 				-- re-application (e.g. Angel Statue): keep it permanent.
 				if inst.permanent then
@@ -721,6 +848,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 					"[StatusService] %s on %s REFRESHED (%s)",
 					statusId, unit.name, def.duration and (def.duration .. " turns") or "CT"
 				))
+				syncStatStatus(unit, statusId)  -- BUG-218: a refresh can change its value scale (Enchanter)
 				return false, disruptsChannel
 
 			elseif def.reapply == "accumulate" then
@@ -731,6 +859,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				inst.storedBurn = (inst.storedBurn or 0) + addedBurn
 				inst.remainingTurns = def.duration
 				traitDebuffOffset(inst, false)
+				applyBossDuration(unit, statusId, def, inst) -- Tester W2 / BUG-163
 				inst.sourceUnitId = sourceUnitId
 				print(string.format(
 					"[StatusService] %s on %s ACCUMULATED (+%d stored, %d turns now)",
@@ -743,11 +872,15 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				inst.stacks = (inst.stacks or 1) + 1
 				inst.remainingTurns = def.duration  -- refresh duration
 				traitDebuffOffset(inst, false)
+				-- Tester W2 / BUG-163: only when a duration was really reset (Venom has none), so an
+				-- untouched timer is never halved again on every stack.
+				if def.duration then applyBossDuration(unit, statusId, def, inst) end
 				inst.sourceUnitId = sourceUnitId
 				print(string.format(
 					"[StatusService] %s on %s STACKED (now %d stacks)",
 					statusId, unit.name, inst.stacks
 				))
+				syncStatStatus(unit, statusId)  -- BUG-218: Enlightened +10% per stack
 				return false, disruptsChannel
 
 			elseif def.reapply == "extend" then
@@ -771,6 +904,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 					inst.remainingCt = durationCtOverride or def.durationCt
 				end
 				traitDebuffOffset(inst, def.durationCt ~= nil)
+				applyBossDuration(unit, statusId, def, inst) -- Tester W2 / BUG-163
 				inst.sourceUnitId = sourceUnitId
 				-- Apply next in chain
 				local CHAIN_NEXT = { Bleed = "Raptured", Raptured = "Wounded", Wounded = "Bleed" }
@@ -905,6 +1039,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 
 	table.insert(unit.statusInstances, instance)
 	syncBreakEquipment(unit, statusId)
+	syncStatStatus(unit, statusId)  -- BUG-218: Weakened / Banner Blessing ... change stats (and Max HP) now
 
 	-- Recharge: immediate MP restore on application (DB elements_statuses id 78:
 	-- "On application: restore round(Max MP × 0.10), minimum 1 MP"). The periodic
@@ -1148,7 +1283,8 @@ function StatusService.ProcessStartOfTurn(unit)
 			-- TRAIT-DOT-POISON: x unit-trait DoT-received multiplier (1.0 when no trait).
 			local damage = math.max(1, math.round(unit.maxHp * def.dotFraction * penetrate(debuffResist, inst.resistPen)
 				* TraitEffectService.GetDotDamageReceivedModifier(unit, inst.id)
-				* doctrinePoisonTickMult(inst))) -- Plague Doctor +25% (2026-10-28)
+				* doctrinePoisonTickMult(inst)
+			* GameConstants.GetBossMod(unit, "hpPctDebuff"))) -- BUG-155: Boss HP% Modifier (core_stats 40) -- Plague Doctor +25% (2026-10-28)
 			table.insert(dotEvents, {
 				statusId     = "Poison",
 				damage       = damage,
@@ -1201,7 +1337,8 @@ function StatusService.ProcessEndOfTurn(unit)
 		local damage = math.max(1, math.round((unit.maxHp or 1) * frac * strength
 			* penetrate(StatusService.GetDebuffResist(unit), inst.resistPen)
 			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Venom")
-			* doctrinePoisonTickMult(inst))) -- Plague Doctor +25% (2026-10-28)
+			* doctrinePoisonTickMult(inst)
+			* GameConstants.GetBossMod(unit, "hpPctDebuff"))) -- BUG-155: Boss HP% Modifier (core_stats 40) -- Plague Doctor +25% (2026-10-28)
 		table.insert(events, {
 			statusId     = "Venom",
 			damage       = damage,
@@ -1244,6 +1381,9 @@ function StatusService.TickStatuses(unit)
 
 	-- Break sync + Oversleep, after the scan so a new Sleep Immunity is not counted down this turn.
 	for _, _rid in ipairs(removed) do onStatusEnded(unit, _rid) end
+	if _onNaturalExpiry then
+		for _, _rid in ipairs(removed) do _onNaturalExpiry(unit, _rid) end  -- BUG-140
+	end
 	return removed
 end
 
@@ -1660,6 +1800,9 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 		if StatusService.WeakenVenomOnHeal(unit) == nil then break end
 	end
 	for _, _rid in ipairs(expired) do onStatusEnded(unit, _rid) end
+	if _onNaturalExpiry then
+		for _, _rid in ipairs(expired) do _onNaturalExpiry(unit, _rid) end  -- BUG-140
+	end
 	return expired, events
 end
 
@@ -1904,7 +2047,8 @@ function StatusService.GetCurrentDotDamage(unit, statusId)
 		return math.max(1, math.round((unit.maxHp or 1) * def.dotFraction
 			* penetrate(StatusService.GetDebuffResist(unit), inst.resistPen)
 			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Poison")
-			* doctrinePoisonTickMult(inst)))
+			* doctrinePoisonTickMult(inst)
+			* GameConstants.GetBossMod(unit, "hpPctDebuff"))) -- BUG-155: Boss HP% Modifier (core_stats 40)
 	elseif inst.id == "Burn" then
 		return StatusService.GetBurnTickDamage(unit, inst)
 	elseif inst.id == "Venom" then
@@ -1913,12 +2057,14 @@ function StatusService.GetCurrentDotDamage(unit, statusId)
 		return math.max(1, math.round((unit.maxHp or 1) * frac * stacks
 			* penetrate(StatusService.GetDebuffResist(unit), inst.resistPen)
 			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Venom")
-			* doctrinePoisonTickMult(inst)))
+			* doctrinePoisonTickMult(inst)
+			* GameConstants.GetBossMod(unit, "hpPctDebuff"))) -- BUG-155: Boss HP% Modifier (core_stats 40)
 	elseif inst.id == "Bleed" then
 		-- Same as Bleed's own on-hit damage (CombatResolver ApplyOutcome): x Debuff Resistance x
 		-- Quick Clotting / Hemophiliac (2026-10-29).
 		return math.max(1, math.round((unit.maxHp or 1) * BLEED_HP_FRACTION * StatusService.GetDebuffResist(unit)
-			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Bleed")))
+			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Bleed")
+			* GameConstants.GetBossMod(unit, "hpPctDebuff"))) -- BUG-159: Boss HP% Modifier (core_stats 40); real hit + previews
 	end
 	return 0
 end
@@ -1930,8 +2076,10 @@ function StatusService.GetStatusSummary(unit)
 		-- Calculate expected next-tick damage
 		local nextDamage = nil
 		if def then
+			-- Tester batch 12 F1 / BUG-159 (core_stats 40): HP%-debuff previews x Boss HP% Modifier (1 for non-bosses).
+			local _bm = GameConstants.GetBossMod(unit, "hpPctDebuff")
 			if def.dotType == "Poison" then
-				nextDamage = math.max(1, math.round(unit.maxHp * def.dotFraction))
+				nextDamage = math.max(1, math.round(unit.maxHp * def.dotFraction * _bm))
 			elseif def.dotType == "Burn" then
 				local stored = inst.storedBurn or 0
 				if stored > 0 and not isBurnDamageImmune(unit) then  -- Dragonscale: 0 next-tick
@@ -1939,13 +2087,13 @@ function StatusService.GetStatusSummary(unit)
 				end
 			elseif inst.id == "Venom" then
 				local stacks = inst.stacks or 1
-				nextDamage = math.max(1, math.round(unit.maxHp * 0.03 * stacks))
+				nextDamage = math.max(1, math.round(unit.maxHp * 0.03 * stacks * _bm))
 			elseif inst.id == "Bleed" then
-				nextDamage = math.max(1, math.round(unit.maxHp * BLEED_HP_FRACTION))
+				nextDamage = math.max(1, math.round(unit.maxHp * BLEED_HP_FRACTION * _bm))
 			elseif inst.id == "Raptured" then
-				nextDamage = math.max(1, math.round(unit.maxHp * 0.02))
+				nextDamage = math.max(1, math.round(unit.maxHp * 0.02 * _bm))
 			elseif inst.id == "Wounded" then
-				nextDamage = math.max(1, math.round(unit.maxHp * 0.15))
+				nextDamage = math.max(1, math.round(unit.maxHp * 0.15 * _bm))
 			end
 		end
 		table.insert(summary, {
@@ -1977,7 +2125,7 @@ function StatusService.RemoveDispellable(unit)
 	while i <= #unit.statusInstances do
 		local inst = unit.statusInstances[i]
 		local def = GameConstants.STATUSES[inst.id]
-		if def and def.dispellable then
+		if def and def.dispellable and not StatusService.IsUndispellable(inst) then
 			table.insert(removed, inst.id)
 			print(string.format("[StatusService] %s PURGED from %s", inst.id, unit.name))
 			table.remove(unit.statusInstances, i)
@@ -1993,12 +2141,22 @@ end
 -- Remove ONE random active debuff (kind == "Debuff") from the unit. Used by the
 -- Cleanse perk (TRAIT-P-132) on enemy KO. Returns the removed status id, or nil if
 -- the unit has no debuffs. Does not touch buffs or special statuses.
+-- Undispellable rule shared by every dispel / cleanse / purge (BUG-104, 2026-11-21): a status is
+-- protected when its definition says undispellable (Thawed, Sleep Immunity) or the instance was
+-- tagged undispellable at apply time (weather hard-locks, WeatherService). DAT-001: one reader.
+function StatusService.IsUndispellable(inst)
+	if not inst then return false end
+	if inst.undispellable then return true end
+	local def = GameConstants.STATUSES[inst.id]
+	return def ~= nil and def.undispellable == true
+end
+
 function StatusService.RemoveRandomDebuff(unit)
 	if not unit.statusInstances then return nil end
 	local debuffIdx = {}
 	for i, inst in ipairs(unit.statusInstances) do
 		local def = GameConstants.STATUSES[inst.id]
-		if def and def.kind == "Debuff" then
+		if def and def.kind == "Debuff" and not StatusService.IsUndispellable(inst) then
 			table.insert(debuffIdx, i)
 		end
 	end
@@ -2019,7 +2177,7 @@ function StatusService.RemoveRandomBuff(unit)
 	local buffIdx = {}
 	for i, inst in ipairs(unit.statusInstances) do
 		local def = GameConstants.STATUSES[inst.id]
-		if def and def.kind == "Buff" then
+		if def and def.kind == "Buff" and not StatusService.IsUndispellable(inst) then
 			table.insert(buffIdx, i)
 		end
 	end

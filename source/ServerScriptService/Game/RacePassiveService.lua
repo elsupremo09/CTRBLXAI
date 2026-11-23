@@ -750,7 +750,7 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed, units)
 		sw.unitId = unit.id
 		unit.isAlive = true
 		UnitSchema.ClearChannelState(unit)
-		unit._revivedThisBattle = true
+		UnitSchema.MarkRevived(unit)  -- kill-credit stamp + revive counter (BUG-143)
 		unit.currentHp = math.max(1, math.ceil((unit.maxHp or 1) * (sw.hpPct or 50) / 100))
 		StatusService.WeakenVenomOnHeal(unit)
 		unit.remainingRt = unit.startingRt or 400
@@ -765,7 +765,7 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed, units)
 		if unit.undyingWillKoCt >= 500 and placeForSelfRevive(unit, units) then
 			unit.isAlive = true
 			UnitSchema.ClearChannelState(unit)  -- never return holding a pre-death channel
-			unit._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
+			UnitSchema.MarkRevived(unit)  -- kill-credit rule (2026-10-26) + revive counter (BUG-143)
 			unit.currentHp = UnitSchema.ReviveHp(unit, 0.25)  -- revive traits apply (re-check 2026-10-29)
 			StatusService.WeakenVenomOnHeal(unit)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			unit.remainingRt = unit.startingRt or 400
@@ -789,7 +789,7 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed, units)
 			-- Revive with 50% Max HP
 			unit.isAlive = true
 			UnitSchema.ClearChannelState(unit)  -- never return holding a pre-death channel
-			unit._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
+			UnitSchema.MarkRevived(unit)  -- kill-credit rule (2026-10-26) + revive counter (BUG-143)
 			unit.currentHp = UnitSchema.ReviveHp(unit, 0.50)  -- revive traits apply (re-check 2026-10-29)
 			StatusService.WeakenVenomOnHeal(unit)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			unit.remainingRt = unit.startingRt or 400

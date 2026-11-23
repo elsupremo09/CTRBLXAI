@@ -207,21 +207,27 @@ end
 -- EXP one unit earns over `hours` hours (unit_progression 78). Hour by hour: each hour
 -- (or the last part hour) pays fixed + pct x EXP-to-next at the level the unit is on at the start of
 -- that hour, so the rate follows its level. Stops at levelCap. Returns the EXP as a float.
-function R.ExpForHours(tier: number, level: number, hours: number, unitLevel: number, xpInto: number,
-	levelCap: number, xpToNext: (number) -> number): number
+-- Shared walk (batch 8, 2026-11-22): ExpForHours and ExpRatePerHourAt read the same loop (DAT-001).
+-- Second value = EXP per hour of the hour that is running at `hours` (the rate is fixed inside an
+-- hour; levels change only at the hour's end). 0 once the unit is at the level cap.
+local function expWalk(tier: number, level: number, hours: number, unitLevel: number, xpInto: number,
+	levelCap: number, xpToNext: (number) -> number): (number, number)
 	local c = R.Cell(level, tier)
-	if not c then return 0 end
+	if not c then return 0, 0 end
 	local cap = math.max(1, math.floor(tonumber(levelCap) or 99))
 	local lvl = math.clamp(math.floor(tonumber(unitLevel) or 1), 1, cap)
 	local into = math.max(0, tonumber(xpInto) or 0)
 	local remaining = math.clamp(tonumber(hours) or 0, 0, R.EARN_LIMIT_HOURS[R.MAX_LEVEL])
 	local total = 0
 	local guard = 0
+	local lastRate, lastPartial = 0, false
 	while remaining > 1e-9 and lvl < cap and guard < 64 do
 		guard += 1
 		local h = math.min(1, remaining)
 		local need = math.max(1, xpToNext(lvl))
-		local gain = (c.fixed + c.pct * need) * h
+		lastRate = c.fixed + c.pct * need
+		lastPartial = h < 1 - 1e-9
+		local gain = lastRate * h
 		total += gain
 		into += gain
 		while lvl < cap do
@@ -232,7 +238,22 @@ function R.ExpForHours(tier: number, level: number, hours: number, unitLevel: nu
 		end
 		remaining -= h
 	end
+	if lastPartial then return total, lastRate end
+	if lvl >= cap then return total, 0 end
+	return total, c.fixed + c.pct * math.max(1, xpToNext(lvl))
+end
+
+function R.ExpForHours(tier: number, level: number, hours: number, unitLevel: number, xpInto: number,
+	levelCap: number, xpToNext: (number) -> number): number
+	local total = expWalk(tier, level, hours, unitLevel, xpInto, levelCap, xpToNext)
 	return total
+end
+
+-- Display only (batch 8): EXP per hour of the hour running at `hours` (same walk as ExpForHours).
+function R.ExpRatePerHourAt(tier: number, level: number, hours: number, unitLevel: number, xpInto: number,
+	levelCap: number, xpToNext: (number) -> number): number
+	local _, rate = expWalk(tier, level, hours, unitLevel, xpInto, levelCap, xpToNext)
+	return rate
 end
 
 -- Material per hour (60 / minutes per whole unit from the table). 0 if not allowed.
